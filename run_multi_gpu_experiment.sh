@@ -8,7 +8,7 @@ export PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:512
 
 # By default, use all available GPUs
 # To use specific GPUs, change this to a comma-separated list (e.g., "0,1,2,3")
-export CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7
+export CUDA_VISIBLE_DEVICES=0,1,2,3,4,5
 
 # Check Python availability
 if ! command -v python3 &> /dev/null; then
