@@ -1,5 +1,7 @@
 #!/bin/bash
 
+pip install flash-attn --no-build-isolation
+
 # Set environment variables to use only one GPU
 export CUDA_VISIBLE_DEVICES=0
 
