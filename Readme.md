@@ -121,11 +121,11 @@ MIT License
 If you use this code for your research, please cite:
 
 ```
-@software{llamaonacid2023,
-  author = {Your Name},
+@software{llamaonacid2025,
+  author = {Itay Knaan-Harpaz},
   title = {LLaMaOnAcid: Simulating Psychedelic Effects on Large Language Models},
-  year = {2023},
-  url = {https://github.com/yourusername/LLaMaOnAcid}
+  year = {2025},
+  url = {https://github.com/KanHarI/LLaMaOnAcid}
 }
 ```
 
