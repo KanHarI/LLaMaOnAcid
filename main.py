@@ -14,6 +14,7 @@ from typing import List, Dict, Tuple, Optional, Union
 import pickle
 import time
 from collections import defaultdict
+from datetime import datetime, timedelta
 
 # Set device
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -83,21 +84,60 @@ class DefaultModeNetworkExperiment:
         print(f"Fetching top {n} Wikipedia articles...")
         
         # Get the most viewed articles from the past month
-        url = "https://wikimedia.org/api/rest_v1/metrics/pageviews/top/en.wikipedia/all-access/2023/10/all-days"
-        response = requests.get(url)
-        data = response.json()
+        # Use current date instead of hardcoded 2023/10
+        current_date = datetime.now()
+        prev_month = current_date - timedelta(days=30)
+        year = prev_month.strftime("%Y")
+        month = prev_month.strftime("%m")
         
-        # Extract article titles
-        articles = []
-        for item in data["items"][0]["articles"]:
-            if "Main_Page" not in item["article"] and "Special:" not in item["article"]:
-                articles.append(item["article"])
-                if len(articles) >= n:
-                    break
+        url = f"https://wikimedia.org/api/rest_v1/metrics/pageviews/top/en.wikipedia/all-access/{year}/{month}/all-days"
+        print(f"Requesting data from URL: {url}")
         
-        self.wikipedia_articles = articles
-        print(f"Fetched {len(articles)} articles")
-        return articles
+        try:
+            response = requests.get(url)
+            response.raise_for_status()  # Raise an exception for HTTP errors
+            data = response.json()
+            
+            # Extract article titles
+            articles = []
+            for item in data["items"][0]["articles"]:
+                if "Main_Page" not in item["article"] and "Special:" not in item["article"]:
+                    articles.append(item["article"])
+                    if len(articles) >= n:
+                        break
+            
+            self.wikipedia_articles = articles
+            print(f"Fetched {len(articles)} articles")
+            return articles
+            
+        except requests.exceptions.HTTPError as http_err:
+            print(f"HTTP error occurred: {http_err}")
+            print(f"Status code: {response.status_code}")
+            print(f"Response text: {response.text[:500]}...")  # Print first 500 chars of response
+        except requests.exceptions.JSONDecodeError as json_err:
+            print(f"JSON decode error: {json_err}")
+            print(f"Response text: {response.text[:500]}...")  # Print first 500 chars of response
+        except Exception as err:
+            print(f"Other error occurred: {err}")
+        
+        # Fallback to a list of common Wikipedia articles if the API fails
+        print("Using fallback list of Wikipedia articles...")
+        fallback_articles = [
+            "United_States", "World_War_II", "Albert_Einstein", "Climate_change",
+            "Artificial_intelligence", "COVID-19_pandemic", "Quantum_mechanics",
+            "World_Wide_Web", "William_Shakespeare", "Solar_System", "Computer",
+            "Mathematics", "Biology", "History", "Science", "Technology", "Art",
+            "Music", "Film", "Literature", "Psychology", "Economics", "Physics",
+            "China", "India", "Europe", "Africa", "Asia", "North_America", "South_America",
+            "Russia", "Germany", "United_Kingdom", "France", "Japan", "Australia",
+            "Canada", "Brazil", "Mexico", "Italy", "Spain", "Democracy", "Capitalism",
+            "Socialism", "Internet", "Space_exploration", "Genetics", "Evolution"
+        ]
+        
+        # Take the first n articles from the fallback list
+        self.wikipedia_articles = fallback_articles[:n]
+        print(f"Using {len(self.wikipedia_articles)} fallback articles")
+        return self.wikipedia_articles
     
     def fetch_article_content(self, article_title: str) -> str:
         """
@@ -109,15 +149,37 @@ class DefaultModeNetworkExperiment:
         Returns:
             Article text content
         """
-        url = f"https://en.wikipedia.org/w/api.php?action=query&prop=extracts&exlimit=1&titles={article_title}&explaintext=1&format=json"
-        response = requests.get(url)
-        data = response.json()
+        max_retries = 3
+        retry_delay = 1  # seconds
         
-        # Extract the page content
-        page_id = list(data["query"]["pages"].keys())[0]
-        content = data["query"]["pages"][page_id]["extract"]
+        for attempt in range(max_retries):
+            try:
+                url = f"https://en.wikipedia.org/w/api.php?action=query&prop=extracts&exlimit=1&titles={article_title}&explaintext=1&format=json"
+                response = requests.get(url)
+                response.raise_for_status()
+                data = response.json()
+                
+                # Extract the page content
+                page_id = list(data["query"]["pages"].keys())[0]
+                
+                # Check if the API returned an error (page_id will be -1 for missing pages)
+                if page_id == "-1":
+                    print(f"Article '{article_title}' not found")
+                    return ""
+                    
+                content = data["query"]["pages"][page_id]["extract"]
+                return content
+                
+            except (requests.exceptions.RequestException, KeyError, IndexError, json.JSONDecodeError) as e:
+                if attempt < max_retries - 1:
+                    print(f"Error fetching '{article_title}', retrying in {retry_delay}s: {e}")
+                    time.sleep(retry_delay)
+                    retry_delay *= 2  # Exponential backoff
+                else:
+                    print(f"Failed to fetch '{article_title}' after {max_retries} attempts: {e}")
+                    return ""  # Return empty string after max retries
         
-        return content
+        return ""  # Should not reach here, but just in case
     
     def prepare_text_chunks(self, chunk_size: int = 512) -> List[str]:
         """
@@ -131,10 +193,16 @@ class DefaultModeNetworkExperiment:
         """
         print("Preparing text chunks from Wikipedia articles...")
         chunks = []
+        min_chunk_tokens = 50  # Minimum number of tokens for a valid chunk
         
         for article_title in tqdm(self.wikipedia_articles):
             try:
                 content = self.fetch_article_content(article_title)
+                
+                # Skip if content is empty
+                if not content or len(content.strip()) < 100:  # Skip very short content
+                    print(f"Skipping article '{article_title}' due to insufficient content")
+                    continue
                 
                 # Tokenize the content
                 tokens = self.tokenizer.encode(content)
@@ -143,8 +211,11 @@ class DefaultModeNetworkExperiment:
                 for i in range(0, len(tokens), chunk_size):
                     if i + chunk_size < len(tokens):
                         chunk_tokens = tokens[i:i+chunk_size]
-                        chunk_text = self.tokenizer.decode(chunk_tokens)
-                        chunks.append(chunk_text)
+                        
+                        # Only add chunks with sufficient content
+                        if len(chunk_tokens) >= min_chunk_tokens:
+                            chunk_text = self.tokenizer.decode(chunk_tokens)
+                            chunks.append(chunk_text)
                         
                 # Sleep to avoid rate limiting
                 time.sleep(0.5)
@@ -152,6 +223,14 @@ class DefaultModeNetworkExperiment:
             except Exception as e:
                 print(f"Error processing article {article_title}: {e}")
                 continue
+        
+        # Ensure we have at least some chunks
+        if not chunks:
+            print("Warning: No valid chunks were created. Using fallback text.")
+            # Create some simple chunks from hardcoded text
+            fallback_text = "The default mode network (DMN) is a large-scale brain network primarily composed of the medial prefrontal cortex, posterior cingulate cortex, and angular gyrus. It is most commonly shown to be active when a person is not focused on the outside world and the brain is at wakeful rest, such as during daydreaming and mind-wandering. It can also be active during detailed thoughts about the past or future, and in social contexts."
+            tokens = self.tokenizer.encode(fallback_text)
+            chunks = [self.tokenizer.decode(tokens)]
         
         # Shuffle the chunks
         random.shuffle(chunks)
