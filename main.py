@@ -511,8 +511,40 @@ class DefaultModeNetworkExperiment:
         
         def get_inhibition_hook(layer_idx, head_masks):
             def hook(module, input, output):
+                # Different models have different output formats for attention
+                # For Mistral/Llama3 models (using attention with flash attention impl)
+                if hasattr(module, "flash_attn") and module.flash_attn:
+                    # Flash attention doesn't return attention weights by default
+                    # We'll need to modify the hidden states directly instead
+                    # This is a simplified approach for these models
+                    if isinstance(output, tuple) and len(output) >= 1:
+                        # Just scale the output hidden states
+                        hidden_states = output[0]
+                        scaling = torch.ones_like(hidden_states[0, 0, 0]).to(hidden_states.device)
+                        
+                        # Apply scaling - this is approximate since we don't have direct 
+                        # access to attention weights with flash attention
+                        for head_idx, scale_factor in head_masks.items():
+                            # The rest of the heads remain at 1.0 (unchanged)
+                            # Scale based on all heads
+                            head_dim = hidden_states.shape[-1] // self.num_heads
+                            start_idx = head_idx * head_dim
+                            end_idx = (head_idx + 1) * head_dim
+                            
+                            # Create head-specific scaling
+                            scaling_factor = torch.ones_like(hidden_states)
+                            scaling_factor[:, :, start_idx:end_idx] *= scale_factor
+                            
+                            # Apply scaling
+                            output_list = list(output)
+                            output_list[0] = hidden_states * scaling_factor
+                            output = tuple(output_list)
+                        
+                        return output
+                
                 # For LLaMA models, attention outputs contain attention probs at index 3
-                if isinstance(output, tuple) and len(output) > 3:
+                # This handles the case where attention weights are returned
+                elif isinstance(output, tuple) and len(output) > 3:
                     # Get attention weights
                     attn_weights = output[3]
                     
@@ -529,33 +561,61 @@ class DefaultModeNetworkExperiment:
                         output_list = list(output)
                         output_list[3] = new_weights
                         output = tuple(output_list)
+                    
+                    return output
                 
-                return output
+                # Fallback for other model architectures - may require model-specific adjustments
+                else:
+                    print(f"Warning: Attention format not recognized for layer {layer_idx}. Output type: {type(output)}")
+                    if isinstance(output, tuple):
+                        print(f"Output tuple length: {len(output)}")
+                    return output
             
             return hook
         
+        # Log model architecture for debugging
+        print(f"Registering hooks for {self.model_name} with {self.num_layers} layers and {self.num_heads} heads")
+        
         # Register hooks for each layer
         for layer_idx, head_masks in attention_masks.items():
-            if hasattr(self.model, "model"):
-                # For LLaMA models
-                attn_module = self.model.model.layers[layer_idx].self_attn
-            else:
-                # For other architectures
-                attn_module = self.model.h[layer_idx].attn
-            
-            # Register the hook
-            hook = attn_module.register_forward_hook(get_inhibition_hook(layer_idx, head_masks))
-            hooks.append(hook)
+            try:
+                if hasattr(self.model, "model") and hasattr(self.model.model, "layers"):
+                    # For LLaMA and Mistral models
+                    attn_module = self.model.model.layers[layer_idx].self_attn
+                elif hasattr(self.model, "layers"):
+                    # Some other architectures
+                    attn_module = self.model.layers[layer_idx].self_attn
+                elif hasattr(self.model, "h"):
+                    # For other architectures (like GPT-2)
+                    attn_module = self.model.h[layer_idx].attn
+                else:
+                    print(f"Warning: Could not find attention module for layer {layer_idx}")
+                    continue
+                
+                # Register the hook
+                hook = attn_module.register_forward_hook(get_inhibition_hook(layer_idx, head_masks))
+                hooks.append(hook)
+                
+            except Exception as e:
+                print(f"Error registering hook for layer {layer_idx}: {e}")
+                continue
         
         # Generate with inhibition
-        with torch.no_grad():
-            outputs = self.model.generate(
-                input_ids,
-                max_new_tokens=max_new_tokens,
-                do_sample=True,
-                temperature=0.7,
-                top_p=0.9,
-            )
+        try:
+            with torch.no_grad():
+                outputs = self.model.generate(
+                    input_ids,
+                    max_new_tokens=max_new_tokens,
+                    do_sample=True,
+                    temperature=0.7,
+                    top_p=0.9,
+                )
+        except Exception as e:
+            print(f"Error during generation with inhibition: {e}")
+            # Remove hooks before re-raising
+            for hook in hooks:
+                hook.remove()
+            raise
         
         # Remove hooks
         for hook in hooks:
@@ -687,6 +747,9 @@ class DefaultModeNetworkExperiment:
             "creativity_score": []
         }
         
+        # Save the text outputs to files for easier viewing
+        self.save_query_outputs(results)
+        
         for query, responses in results.items():
             for factor, response in responses.items():
                 # Strip the query from the beginning of the response
@@ -762,6 +825,50 @@ class DefaultModeNetworkExperiment:
         plt.show()
         
         return df
+
+    def save_query_outputs(self, results: Dict, output_dir: str = "query_outputs"):
+        """
+        Save the query outputs to text files for easier viewing.
+        
+        Args:
+            results: Results dictionary from run_experiment
+            output_dir: Directory to save the output files
+        """
+        # Create the output directory if it doesn't exist
+        os.makedirs(output_dir, exist_ok=True)
+        
+        # Get model name shorthand for the filenames
+        model_shortname = self.model_name.split('/')[-1].lower()
+        
+        print(f"Saving query outputs to {output_dir}/")
+        
+        # Save a combined summary file
+        with open(f"{output_dir}/{model_shortname}_all_outputs.txt", "w") as summary_file:
+            summary_file.write(f"== Experiment results for {self.model_name} ==\n\n")
+            
+            for query, responses in results.items():
+                summary_file.write(f"\n\n==== QUERY: {query} ====\n\n")
+                
+                for factor, response in sorted(responses.items()):
+                    summary_file.write(f"-- Inhibition factor: {factor} --\n")
+                    summary_file.write(response)
+                    summary_file.write("\n\n" + "-"*80 + "\n\n")
+        
+        # Save individual files for each query and inhibition factor
+        for query, responses in results.items():
+            # Create a safe filename from the query
+            query_filename = query.replace(" ", "_").replace("?", "").replace(".", "")[:30]
+            
+            for factor, response in responses.items():
+                filename = f"{output_dir}/{model_shortname}_{query_filename}_inhibition_{factor}.txt"
+                
+                with open(filename, "w") as f:
+                    f.write(f"Query: {query}\n")
+                    f.write(f"Inhibition factor: {factor}\n\n")
+                    f.write(response)
+                    
+        print(f"Saved query outputs to individual files in {output_dir}/")
+        print(f"Saved combined summary to {output_dir}/{model_shortname}_all_outputs.txt")
 
 
 # Example usage
