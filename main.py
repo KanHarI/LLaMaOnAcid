@@ -24,64 +24,81 @@ class DefaultModeNetworkExperiment:
     Class to simulate the effects of LSD on large language models by manipulating attention head activations.
     """
     
-    def __init__(self, model_name: str = "meta-llama/Llama-3-70b", cache_dir: Optional[str] = None):
+    def __init__(self, model_name: str, device: str = "cuda"):
         """
-        Initialize the experiment with the specified model.
+        Initialize the DefaultModeNetworkExperiment.
         
         Args:
-            model_name: Name of the HuggingFace model to use
-            cache_dir: Directory to cache the model weights
+            model_name: The name or path of the model to use
+            device: The device to use (cuda or cpu)
         """
         self.model_name = model_name
-        self.cache_dir = cache_dir
+        print(f"Initializing experiment with model: {model_name}")
         
-        print(f"Loading tokenizer for {model_name}...")
-        self.tokenizer = AutoTokenizer.from_pretrained(model_name, cache_dir=cache_dir)
+        # Create cache directory
+        self.wiki_cache_dir = os.path.join("cache", model_name.replace("/", "_"))
+        os.makedirs(self.wiki_cache_dir, exist_ok=True)
+        print(f"Created cache directory: {self.wiki_cache_dir}")
         
-        print(f"Loading model {model_name}...")
-        # Load model with 8-bit quantization to save memory
+        # Load model and tokenizer
+        self.tokenizer = AutoTokenizer.from_pretrained(model_name)
+        print("Tokenizer loaded")
+        
+        # For flash attention compatibility
         self.model = AutoModelForCausalLM.from_pretrained(
-            model_name,
-            cache_dir=cache_dir,
-            device_map="auto",  # Automatically distribute across available GPUs
-            # load_in_8bit=True,  # Use 8-bit quantization
-            torch_dtype=torch.float16,  # Use half precision
-            attn_implementation="flash_attention_2",  # Use FlashAttention for better memory efficiency
+            model_name, 
+            device_map=device,
+            torch_dtype=torch.float16,
+            attn_implementation="eager"  # Use eager implementation for compatibility
         )
+        print("Model loaded")
         
-        # Model architecture properties
-        if hasattr(self.model.config, "num_hidden_layers"):
-            self.num_layers = self.model.config.num_hidden_layers
-        else:
-            self.num_layers = self.model.config.n_layer
-            
-        if hasattr(self.model.config, "num_attention_heads"):
-            self.num_heads = self.model.config.num_attention_heads
-        else:
-            self.num_heads = self.model.config.n_head
-            
-        print(f"Model loaded with {self.num_layers} layers and {self.num_heads} attention heads per layer")
+        # Model dimensions
+        self.num_layers = self.model.config.num_hidden_layers 
+        self.num_heads = self.model.config.num_attention_heads
+        print(f"Model has {self.num_layers} layers and {self.num_heads} attention heads per layer")
         
-        # Storage for activations
+        # Data storage
+        self.articles = []
+        self.processed_chunks = []
         self.default_mode_activations = {}
-        self.head_importance_scores = None
+        self.head_importance_scores = []
         self.top_default_mode_heads = []
         
-        # Wikipedia data
-        self.wikipedia_articles = []
-        self.processed_chunks = []
-        
-    def fetch_top_wikipedia_articles(self, n: int = 100) -> List[str]:
+    def fetch_top_wikipedia_articles(self, n: int = 100, use_cache: bool = True, cache_ttl_days: int = 30) -> List[str]:
         """
         Fetch the top N most viewed Wikipedia articles.
         
         Args:
             n: Number of top articles to fetch
+            use_cache: Whether to use cached list if available
+            cache_ttl_days: How many days before the cached list expires
             
         Returns:
             List of article titles
         """
         print(f"Fetching top {n} Wikipedia articles...")
+        
+        # Check for cached list of top articles
+        cache_file = os.path.join(self.wiki_cache_dir, "top_articles.json")
+        
+        if use_cache and os.path.exists(cache_file):
+            try:
+                with open(cache_file, "r") as f:
+                    cached_data = json.load(f)
+                
+                # Check if cache is still valid
+                cache_timestamp = datetime.fromisoformat(cached_data.get("timestamp", "2000-01-01"))
+                cache_age = (datetime.now() - cache_timestamp).days
+                
+                if cache_age <= cache_ttl_days:
+                    self.articles = cached_data.get("articles", [])[:n]
+                    print(f"Using cached list of {len(self.articles)} top articles from {cache_timestamp}")
+                    return self.articles
+                else:
+                    print(f"Cached article list is {cache_age} days old (> {cache_ttl_days}), fetching new data")
+            except Exception as e:
+                print(f"Error reading cached article list: {e}")
         
         # Get the most viewed articles from the past month
         # Use current date instead of hardcoded 2023/10
@@ -106,7 +123,19 @@ class DefaultModeNetworkExperiment:
                     if len(articles) >= n:
                         break
             
-            self.wikipedia_articles = articles
+            # Cache the fetched articles
+            cache_data = {
+                "timestamp": datetime.now().isoformat(),
+                "articles": articles
+            }
+            try:
+                with open(cache_file, "w") as f:
+                    json.dump(cache_data, f)
+                print(f"Cached list of {len(articles)} top articles")
+            except Exception as e:
+                print(f"Error caching article list: {e}")
+            
+            self.articles = articles
             print(f"Fetched {len(articles)} articles")
             return articles
             
@@ -119,6 +148,19 @@ class DefaultModeNetworkExperiment:
             print(f"Response text: {response.text[:500]}...")  # Print first 500 chars of response
         except Exception as err:
             print(f"Other error occurred: {err}")
+        
+        # Try to load expired cache as a fallback if it exists
+        if os.path.exists(cache_file):
+            try:
+                with open(cache_file, "r") as f:
+                    cached_data = json.load(f)
+                articles = cached_data.get("articles", [])[:n]
+                if articles:
+                    print(f"Using expired cached list of {len(articles)} articles as fallback")
+                    self.articles = articles
+                    return articles
+            except Exception as e:
+                print(f"Error reading cached article list as fallback: {e}")
         
         # Fallback to a list of common Wikipedia articles if the API fails
         print("Using fallback list of Wikipedia articles...")
@@ -135,69 +177,168 @@ class DefaultModeNetworkExperiment:
         ]
         
         # Take the first n articles from the fallback list
-        self.wikipedia_articles = fallback_articles[:n]
-        print(f"Using {len(self.wikipedia_articles)} fallback articles")
-        return self.wikipedia_articles
+        self.articles = fallback_articles[:n]
+        print(f"Using {len(self.articles)} fallback articles")
+        return self.articles
     
-    def fetch_article_content(self, article_title: str) -> str:
+    def fetch_article_content(self, article_title: str, use_cache: bool = True, cache_ttl_days: int = 90) -> str:
         """
-        Fetch the content of a Wikipedia article.
+        Fetch the content of a Wikipedia article, using cache if available.
         
         Args:
-            article_title: Title of the article
-            
+            article_title: Title of the Wikipedia article
+            use_cache: Whether to use cached content
+            cache_ttl_days: How many days to consider cached content valid
+        
         Returns:
-            Article text content
+            Article content as a string
         """
-        max_retries = 3
-        retry_delay = 1  # seconds
+        cache_file = os.path.join(
+            self.wiki_cache_dir, 
+            f"article_{article_title.replace(' ', '_').replace('/', '_')}.json"
+        )
         
-        for attempt in range(max_retries):
+        # Check cache first if enabled
+        if use_cache and os.path.exists(cache_file):
             try:
-                url = f"https://en.wikipedia.org/w/api.php?action=query&prop=extracts&exlimit=1&titles={article_title}&explaintext=1&format=json"
-                response = requests.get(url)
-                response.raise_for_status()
-                data = response.json()
+                with open(cache_file, 'r', encoding='utf-8') as f:
+                    cached_data = json.load(f)
                 
-                # Extract the page content
-                page_id = list(data["query"]["pages"].keys())[0]
-                
-                # Check if the API returned an error (page_id will be -1 for missing pages)
-                if page_id == "-1":
-                    print(f"Article '{article_title}' not found")
-                    return ""
+                cache_timestamp = cached_data.get('timestamp')
+                if cache_timestamp:
+                    # Calculate age of cache in days
+                    cache_date = datetime.fromisoformat(cache_timestamp)
+                    cache_age = (datetime.now() - cache_date).days
                     
-                content = data["query"]["pages"][page_id]["extract"]
-                return content
-                
-            except (requests.exceptions.RequestException, KeyError, IndexError, json.JSONDecodeError) as e:
-                if attempt < max_retries - 1:
-                    print(f"Error fetching '{article_title}', retrying in {retry_delay}s: {e}")
-                    time.sleep(retry_delay)
-                    retry_delay *= 2  # Exponential backoff
-                else:
-                    print(f"Failed to fetch '{article_title}' after {max_retries} attempts: {e}")
-                    return ""  # Return empty string after max retries
+                    if cache_age <= cache_ttl_days:
+                        # Cache is still valid
+                        print(f"Using cached content for '{article_title}' ({cache_age} days old)")
+                        return cached_data.get('content', '')
+                    else:
+                        print(f"Cached content for '{article_title}' is {cache_age} days old (> {cache_ttl_days})")
+            except Exception as e:
+                print(f"Error reading cache for '{article_title}': {e}")
         
-        return ""  # Should not reach here, but just in case
+        # Cache miss or expired, fetch from Wikipedia
+        try:
+            # Make the article title URL-safe
+            url_title = article_title.replace(' ', '_')
+            
+            # Wikipedia API URL for content extraction
+            url = f"https://en.wikipedia.org/w/api.php?action=query&prop=extracts&format=json&exintro=&titles={url_title}"
+            
+            # Add user agent to avoid 403 errors
+            headers = {
+                'User-Agent': 'DefaultModeNetworkExperiment/1.0 (Research project; contact@example.com)'
+            }
+            
+            # Fetch with retry logic
+            max_retries = 3
+            retry_delay = 2  # seconds
+            
+            for attempt in range(max_retries):
+                try:
+                    response = requests.get(url, headers=headers, timeout=10)
+                    response.raise_for_status()  # Raise exception for 4XX/5XX responses
+                    break
+                except requests.exceptions.RequestException as e:
+                    if attempt < max_retries - 1:
+                        print(f"Retry {attempt+1}/{max_retries} for '{article_title}' after error: {e}")
+                        time.sleep(retry_delay * (attempt + 1))  # Exponential backoff
+                    else:
+                        raise
+            
+            data = response.json()
+            
+            # Extract the page content
+            pages = data.get('query', {}).get('pages', {})
+            if not pages:
+                raise ValueError(f"No pages found for '{article_title}'")
+            
+            # Get the first page (there should only be one)
+            page_id = next(iter(pages))
+            if page_id == '-1':
+                raise ValueError(f"Article '{article_title}' not found")
+            
+            content = pages[page_id].get('extract', '')
+            
+            # Cache the content if we got something
+            if content and use_cache:
+                try:
+                    cache_data = {
+                        'title': article_title,
+                        'timestamp': datetime.now().isoformat(),
+                        'content': content
+                    }
+                    with open(cache_file, 'w', encoding='utf-8') as f:
+                        json.dump(cache_data, f, ensure_ascii=False)
+                except Exception as e:
+                    print(f"Error caching content for '{article_title}': {e}")
+            
+            return content
+            
+        except Exception as e:
+            print(f"Error fetching content for '{article_title}': {e}")
+            
+            # Try to use expired cache as fallback
+            if os.path.exists(cache_file):
+                try:
+                    with open(cache_file, 'r', encoding='utf-8') as f:
+                        cached_data = json.load(f)
+                    print(f"Using expired cache as fallback for '{article_title}'")
+                    return cached_data.get('content', '')
+                except Exception as cache_e:
+                    print(f"Error reading expired cache: {cache_e}")
+            
+            # If all else fails, return empty string
+            return ""
     
-    def prepare_text_chunks(self, chunk_size: int = 512) -> List[str]:
+    def prepare_text_chunks(self, chunk_size: int = 512, use_cache: bool = True) -> List[str]:
         """
         Prepare chunks of Wikipedia articles for processing.
         
         Args:
             chunk_size: Size of each chunk in tokens
+            use_cache: Whether to use cached chunks if available
             
         Returns:
             List of text chunks
         """
         print("Preparing text chunks from Wikipedia articles...")
+        
+        # Check for cached chunks
+        chunks_cache_file = os.path.join(self.wiki_cache_dir, f"chunks_{chunk_size}.pkl")
+        
+        if use_cache and os.path.exists(chunks_cache_file):
+            try:
+                with open(chunks_cache_file, "rb") as f:
+                    cached_data = pickle.load(f)
+                
+                # Verify the cache contains what we expect
+                if "chunks" in cached_data and "articles" in cached_data:
+                    cached_articles = set(cached_data["articles"])
+                    current_articles = set(self.articles)
+                    
+                    # If the cached chunks were generated from the same or a superset of current articles
+                    if current_articles.issubset(cached_articles):
+                        self.processed_chunks = cached_data["chunks"]
+                        print(f"Using {len(self.processed_chunks)} cached chunks from {len(cached_articles)} articles")
+                        return self.processed_chunks
+                    else:
+                        # If we have new articles, but can reuse some cached content
+                        print(f"Articles list changed. Cached: {len(cached_articles)}, Current: {len(current_articles)}")
+                        print(f"Will fetch content for {len(current_articles - cached_articles)} new articles")
+            except Exception as e:
+                print(f"Error reading cached chunks: {e}")
+        
         chunks = []
         min_chunk_tokens = 50  # Minimum number of tokens for a valid chunk
+        processed_articles = []  # Keep track of successfully processed articles
         
-        for article_title in tqdm(self.wikipedia_articles):
+        for article_title in tqdm(self.articles):
             try:
-                content = self.fetch_article_content(article_title)
+                # Use our cache-aware fetch_article_content method
+                content = self.fetch_article_content(article_title, use_cache=use_cache)
                 
                 # Skip if content is empty
                 if not content or len(content.strip()) < 100:  # Skip very short content
@@ -208,6 +349,7 @@ class DefaultModeNetworkExperiment:
                 tokens = self.tokenizer.encode(content)
                 
                 # Split into chunks
+                article_has_valid_chunks = False
                 for i in range(0, len(tokens), chunk_size):
                     if i + chunk_size < len(tokens):
                         chunk_tokens = tokens[i:i+chunk_size]
@@ -216,6 +358,11 @@ class DefaultModeNetworkExperiment:
                         if len(chunk_tokens) >= min_chunk_tokens:
                             chunk_text = self.tokenizer.decode(chunk_tokens)
                             chunks.append(chunk_text)
+                            article_has_valid_chunks = True
+                
+                # Only record this article as processed if it contributed valid chunks
+                if article_has_valid_chunks:
+                    processed_articles.append(article_title)
                         
                 # Sleep to avoid rate limiting
                 time.sleep(0.5)
@@ -223,6 +370,21 @@ class DefaultModeNetworkExperiment:
             except Exception as e:
                 print(f"Error processing article {article_title}: {e}")
                 continue
+        
+        # Cache the chunks if we have any
+        if chunks:
+            try:
+                cache_data = {
+                    "timestamp": datetime.now().isoformat(),
+                    "chunk_size": chunk_size,
+                    "articles": processed_articles,
+                    "chunks": chunks
+                }
+                with open(chunks_cache_file, "wb") as f:
+                    pickle.dump(cache_data, f)
+                print(f"Cached {len(chunks)} processed chunks from {len(processed_articles)} articles")
+            except Exception as e:
+                print(f"Error caching processed chunks: {e}")
         
         # Ensure we have at least some chunks
         if not chunks:
@@ -290,20 +452,44 @@ class DefaultModeNetworkExperiment:
         
         return hooks
     
-    def identify_default_mode_network(self, sample_size: int = 100):
+    def identify_default_mode_network(self, sample_size: int = 100, use_cache: bool = True):
         """
         Process Wikipedia chunks to identify the default mode network.
         
         Args:
             sample_size: Number of chunks to process
+            use_cache: Whether to use cached activations if available
         """
         print("Identifying default mode network from Wikipedia chunks...")
+        
+        # Check if we have previously processed activations in cache
+        activations_cache_file = os.path.join(self.wiki_cache_dir, 
+                                             f"dmn_activations_{self.model_name.split('/')[-1]}_{sample_size}.pkl")
+        
+        if use_cache and os.path.exists(activations_cache_file):
+            try:
+                print(f"Loading cached DMN activations from {activations_cache_file}")
+                with open(activations_cache_file, "rb") as f:
+                    cached_data = pickle.load(f)
+                
+                if "default_mode_activations" in cached_data:
+                    self.default_mode_activations = cached_data["default_mode_activations"]
+                    print(f"Loaded cached activations for {len(self.default_mode_activations)} layers")
+                    
+                    # Calculate importance scores from the loaded activations
+                    self._calculate_head_importance_scores()
+                    print("Calculated head importance scores from cached activations")
+                    return
+                    
+            except Exception as e:
+                print(f"Error loading cached activations: {e}")
         
         # Register hooks to capture attention activations
         hooks = self.register_attention_hooks()
         
         # Process chunks
         chunks_to_process = self.processed_chunks[:sample_size]
+        print(f"Processing {len(chunks_to_process)} chunks to identify default mode network")
         for chunk in tqdm(chunks_to_process):
             # Tokenize the chunk
             inputs = self.tokenizer(chunk, return_tensors="pt").to(device)
@@ -317,6 +503,30 @@ class DefaultModeNetworkExperiment:
             hook.remove()
         
         # Calculate average activations and importance scores for each head
+        self._calculate_head_importance_scores()
+        
+        # Cache the activations if we have any
+        if self.default_mode_activations:
+            try:
+                cache_data = {
+                    "timestamp": datetime.now().isoformat(),
+                    "model_name": self.model_name,
+                    "sample_size": sample_size,
+                    "default_mode_activations": self.default_mode_activations,
+                    "head_importance_scores": self.head_importance_scores
+                }
+                with open(activations_cache_file, "wb") as f:
+                    pickle.dump(cache_data, f)
+                print(f"Cached DMN activations for {len(self.default_mode_activations)} layers")
+            except Exception as e:
+                print(f"Error caching DMN activations: {e}")
+        
+        print("Default mode network identification complete")
+        
+    def _calculate_head_importance_scores(self):
+        """
+        Calculate head importance scores based on the captured activations.
+        """
         avg_activations = {}
         for layer_idx in self.default_mode_activations:
             avg_activations[layer_idx] = {}
@@ -334,7 +544,6 @@ class DefaultModeNetworkExperiment:
         head_scores.sort(key=lambda x: x[2], reverse=True)
         
         self.head_importance_scores = head_scores
-        print("Default mode network identification complete")
     
     def select_top_default_mode_heads(self, top_n: int = 50):
         """
@@ -668,133 +877,171 @@ class DefaultModeNetworkExperiment:
         generated_text = self.tokenizer.decode(outputs[0], skip_special_tokens=True)
         return generated_text
     
-    def run_experiment(self, 
-                     queries: List[str], 
-                     inhibition_factors: List[float] = [0.0, 0.3, 0.5, 0.7, 0.9],
-                     max_new_tokens: int = 200,
-                     dmn_file: Optional[str] = None) -> Dict:
+    def run_experiment(self, use_inhibition: bool = True, queries: list = None, 
+                     n_chunks: int = 100, num_inhibition_factors: int = 5, 
+                     chunk_size: int = 512, dmn_file: str = None,
+                     use_cache: bool = True, force_article_refresh: bool = False):
         """
-        Run the experiment with multiple queries and inhibition factors.
+        Run the full experiment:
+        1. Fetch Wikipedia articles
+        2. Prepare text chunks
+        3. Identify default mode network
+        4. Select top DMN heads
+        5. Generate responses for queries with and without inhibition
+        6. Save the outputs
         
         Args:
-            queries: List of queries to test
-            inhibition_factors: List of inhibition factors to try
-            max_new_tokens: Maximum tokens to generate for each query
-            dmn_file: Path to a saved default mode network file to load (if not already loaded)
-            
-        Returns:
-            Dictionary of experimental results
+            use_inhibition: Whether to use inhibition
+            queries: List of queries to answer
+            n_chunks: Number of chunks to process
+            num_inhibition_factors: Number of inhibition factors to test
+            chunk_size: Size of chunks in tokens
+            dmn_file: Path to a file containing pre-identified DMN heads
+            use_cache: Whether to use cached data (articles, chunks, activations)
+            force_article_refresh: Whether to force a refresh of article data
         """
-        # Check if we have default mode network heads
-        if not self.top_default_mode_heads and dmn_file:
-            print(f"Default mode network not loaded, attempting to load from {dmn_file}")
-            try:
-                self.load_default_mode_network(dmn_file)
-            except Exception as e:
-                print(f"Error loading default mode network: {e}")
-                print("Please run identify_default_mode_network() and select_top_default_mode_heads() first")
-                return {}
-        
-        # Double check that we have heads selected
-        if not self.top_default_mode_heads:
-            print("No default mode network heads selected.")
-            print("Please run identify_default_mode_network() and select_top_default_mode_heads() first")
-            return {}
-            
-        results = {}
-        
-        # Try to process at least one query even if others fail
+        print(f"Running experiment with {self.model_name}")
+        results = []
         at_least_one_succeeded = False
         
-        for query_index, query in enumerate(queries):
-            print(f"\n===== Processing query {query_index+1}/{len(queries)}: '{query}' =====")
-            results[query] = {}
-            
-            try:
-                for factor in inhibition_factors:
-                    print(f"\nTesting query: '{query}' with inhibition factor {factor}")
-                    
-                    try:
-                        if factor == 0.0:
-                            # Just run the model normally
-                            print("Running normal generation without inhibition...")
-                            inputs = self.tokenizer(query, return_tensors="pt").to(device)
-                            with torch.no_grad():
-                                outputs = self.model.generate(
-                                    inputs.input_ids,
-                                    max_new_tokens=max_new_tokens,
-                                    do_sample=True,
-                                    temperature=0.7,
-                                    top_p=0.9,
-                                )
-                            output = self.tokenizer.decode(outputs[0], skip_special_tokens=True)
-                            print(f"Normal generation completed, output length: {len(output)} chars")
-                            results[query][factor] = output
-                            
-                            # Save intermediate results after each successful generation
-                            if not at_least_one_succeeded:
-                                print("Saving intermediate results...")
-                                self.save_query_outputs(results, output_dir="query_outputs_interim")
-                                at_least_one_succeeded = True
-                                
-                        else:
-                            # Run with inhibition
-                            print(f"Running generation with inhibition factor {factor}...")
-                            try:
-                                normal_output, inhibited_output = self.generate_with_inhibition(
-                                    query, 
-                                    inhibition_factor=factor,
-                                    max_new_tokens=max_new_tokens
-                                )
-                                print(f"Inhibited generation completed, output length: {len(inhibited_output)} chars")
-                                results[query][factor] = inhibited_output
-                                
-                                # Save intermediate results after each successful generation
-                                if not at_least_one_succeeded:
-                                    print("Saving intermediate results...")
-                                    self.save_query_outputs(results, output_dir="query_outputs_interim")
-                                    at_least_one_succeeded = True
-                                
-                            except Exception as inhibition_err:
-                                print(f"Error during inhibited generation: {inhibition_err}")
-                                # Add a placeholder response
-                                results[query][factor] = f"[Error generating with inhibition factor {factor}: {str(inhibition_err)}]"
-                                
-                                # Try to run normal generation as fallback
-                                print("Attempting fallback to normal generation...")
-                                inputs = self.tokenizer(query, return_tensors="pt").to(device)
-                                with torch.no_grad():
-                                    outputs = self.model.generate(
-                                        inputs.input_ids,
-                                        max_new_tokens=max_new_tokens,
-                                        do_sample=True,
-                                        temperature=0.7,
-                                        top_p=0.9,
-                                    )
-                                output = self.tokenizer.decode(outputs[0], skip_special_tokens=True)
-                                results[query][factor] = f"[Fallback to normal generation due to error: {str(inhibition_err)}]\n\n{output}"
-                    
-                    except Exception as factor_err:
-                        print(f"Error processing inhibition factor {factor}: {factor_err}")
-                        results[query][factor] = f"[Error with factor {factor}: {str(factor_err)}]"
-                        
-                    # Save results after each factor is processed
-                    if query_index == 0 or (query_index > 0 and factor == inhibition_factors[-1]):
-                        print("Saving current results...")
-                        self.save_query_outputs(results)
-                
-            except Exception as query_err:
-                print(f"Error processing query '{query}': {query_err}")
-                results[query]["error"] = f"Failed to process query: {str(query_err)}"
-                
-            # Save results after each query is processed
-            print(f"Completed query: '{query}', saving results...")
-            self.save_query_outputs(results)
-            
-        # Final save of all results
-        print("Experiment completed, saving final results...")
-        self.save_query_outputs(results)
+        if queries is None:
+            print("No queries provided, using default test queries")
+            queries = [
+                "What is the meaning of life?",
+                "Tell me about the history of Rome.",
+                "Explain quantum physics.",
+                "What are the major challenges facing humanity?",
+                "How does the brain work?"
+            ]
         
+        # Step 1: Fetch Wikipedia articles
+        try:
+            print("Fetching Wikipedia articles...")
+            self.articles = self.fetch_top_wikipedia_articles(use_cache=use_cache, force_refresh=force_article_refresh)
+            print(f"Fetched {len(self.articles)} articles")
+        except Exception as e:
+            print(f"Error fetching articles: {e}")
+            print("Using fallback list of articles")
+            self.articles = [
+                {'article': 'Philosophy', 'views': 10000},
+                {'article': 'Science', 'views': 9000},
+                {'article': 'History', 'views': 8000},
+                {'article': 'Literature', 'views': 7000},
+                {'article': 'Mathematics', 'views': 6000}
+            ]
+        
+        # Step 2: Prepare text chunks
+        try:
+            print("Preparing text chunks...")
+            self.processed_chunks = self.prepare_text_chunks(chunk_size=chunk_size, use_cache=use_cache)
+            print(f"Prepared {len(self.processed_chunks)} text chunks")
+        except Exception as e:
+            print(f"Error preparing text chunks: {e}")
+            self.processed_chunks = ["This is a fallback text chunk." * 50]
+        
+        # Step 3 & 4: Load or identify default mode network
+        if dmn_file and os.path.exists(dmn_file):
+            print(f"Loading pre-identified DMN from {dmn_file}")
+            self.load_default_mode_network(dmn_file)
+        else:
+            print("Identifying default mode network...")
+            try:
+                self.identify_default_mode_network(sample_size=min(n_chunks, len(self.processed_chunks)), use_cache=use_cache)
+                self.select_top_default_mode_heads()
+            except Exception as e:
+                print(f"Error identifying default mode network: {e}")
+                print("Using fallback default mode network")
+                # Create a fallback DMN
+                num_layers = self.model.config.num_hidden_layers
+                num_heads = self.model.config.num_attention_heads
+                self.top_default_mode_heads = [(l, h) for l, h in zip(
+                    np.random.randint(0, num_layers, size=50),
+                    np.random.randint(0, num_heads, size=50)
+                )]
+                print(f"Created fallback DMN with {len(self.top_default_mode_heads)} heads")
+        
+        # Step 5: Generate responses
+        inhibition_factors = [0.0]  # Normal generation
+        if use_inhibition:
+            # Add inhibition factors
+            inhibition_factors.extend(np.linspace(0.1, 1.0, num_inhibition_factors))
+        
+        print(f"Generating responses for {len(queries)} queries with {len(inhibition_factors)} inhibition factors")
+        
+        for query in queries:
+            query_results = []
+            print(f"\nProcessing query: {query}")
+            
+            for factor in inhibition_factors:
+                try:
+                    print(f"  Generating with inhibition factor: {factor:.2f}")
+                    response = None
+                    
+                    if factor == 0.0:
+                        # Normal generation without inhibition
+                        inputs = self.tokenizer(query, return_tensors="pt").to(device)
+                        output = self.model.generate(
+                            **inputs,
+                            max_new_tokens=150,
+                            do_sample=True,
+                            temperature=0.7,
+                            top_p=0.9
+                        )
+                        response = self.tokenizer.decode(output[0], skip_special_tokens=True)
+                    else:
+                        # Generation with inhibition
+                        try:
+                            normal_response, inhibited_response = self.generate_with_inhibition(
+                                query, inhibition_factor=factor
+                            )
+                            response = inhibited_response
+                        except Exception as e:
+                            print(f"Error with inhibited generation: {e}")
+                            print("Falling back to normal generation")
+                            # Fall back to normal generation
+                            inputs = self.tokenizer(query, return_tensors="pt").to(device)
+                            output = self.model.generate(
+                                **inputs,
+                                max_new_tokens=150,
+                                do_sample=True,
+                                temperature=0.7,
+                                top_p=0.9
+                            )
+                            response = self.tokenizer.decode(output[0], skip_special_tokens=True)
+                    
+                    # Add to results
+                    if response:
+                        result = {
+                            'query': query,
+                            'inhibition_factor': factor,
+                            'response': response
+                        }
+                        query_results.append(result)
+                        at_least_one_succeeded = True
+                        print(f"  Generation successful (length: {len(response)})")
+                    else:
+                        print(f"  Generation failed - empty response")
+                
+                except Exception as e:
+                    print(f"  Error generating response for factor {factor}: {e}")
+            
+            results.extend(query_results)
+            
+            # Save intermediate results after each query
+            if query_results:
+                self.save_query_outputs(results, suffix=f"_intermediate_{len(results)}")
+        
+        # Step 6: Save outputs
+        try:
+            print("\nSaving outputs...")
+            self.save_query_outputs(results)
+        except Exception as e:
+            print(f"Error saving outputs: {e}")
+        
+        if not at_least_one_succeeded:
+            print("Warning: No successful generations were produced during this experiment.")
+        
+        print("Experiment complete")
         return results
     
     def visualize_default_mode_network(self, top_n: int = 100, save_path: Optional[str] = None):
@@ -933,103 +1180,99 @@ class DefaultModeNetworkExperiment:
         
         return df
 
-    def save_query_outputs(self, results: Dict, output_dir: str = "query_outputs"):
+    def save_query_outputs(self, results, output_dir="query_outputs", suffix=""):
         """
-        Save the query outputs to text files for easier viewing.
+        Save the query outputs to files.
         
         Args:
-            results: Results dictionary from run_experiment
-            output_dir: Directory to save the output files
+            results: List of results dictionaries, each with query, inhibition_factor and response
+            output_dir: Directory to save the outputs
+            suffix: Optional suffix for the output files
         """
         if not results:
-            print("Warning: No results to save")
-            # Create an empty placeholder file to show the process ran
+            print("Warning: No results to save.")
+            # Create a directory if it doesn't exist
             os.makedirs(output_dir, exist_ok=True)
-            with open(f"{output_dir}/no_results.txt", "w") as f:
+            with open(os.path.join(output_dir, f"no_results{suffix}.txt"), "w") as f:
                 f.write("No results were generated during the experiment.\n")
-                f.write(f"Timestamp: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
             return
         
         # Create the output directory if it doesn't exist
         os.makedirs(output_dir, exist_ok=True)
         
-        # Get model name shorthand for the filenames
-        model_shortname = self.model_name.split('/')[-1].lower()
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         
-        print(f"Saving query outputs to {output_dir}/")
-        
-        # Save a combined summary file
         try:
-            with open(f"{output_dir}/{model_shortname}_all_outputs.txt", "w") as summary_file:
-                summary_file.write(f"== Experiment results for {self.model_name} ==\n\n")
-                summary_file.write(f"Generated on: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n")
-                summary_file.write(f"Model has {self.num_layers} layers and {self.num_heads} heads per layer\n\n")
+            # Create a combined summary file
+            model_name_safe = self.model_name.replace("/", "-").replace(".", "-")
+            output_file = os.path.join(
+                output_dir, f"{model_name_safe}_all_outputs{suffix}.txt"
+            )
+            
+            with open(output_file, "w") as f:
+                f.write(f"Experiment results for {self.model_name}\n")
+                f.write(f"Timestamp: {timestamp}\n")
+                f.write("=" * 80 + "\n\n")
                 
-                for query, responses in results.items():
-                    summary_file.write(f"\n\n==== QUERY: {query} ====\n\n")
+                # Group results by query
+                query_results = {}
+                for result in results:
+                    query = result.get('query', 'Unknown query')
+                    if query not in query_results:
+                        query_results[query] = []
+                    query_results[query].append(result)
+                
+                # Write results for each query
+                for query, query_list in query_results.items():
+                    f.write(f"QUERY: {query}\n")
+                    f.write("-" * 80 + "\n\n")
                     
-                    if not responses:
-                        summary_file.write("No responses generated for this query.\n")
-                        continue
+                    # Sort by inhibition factor
+                    query_list.sort(key=lambda x: x.get('inhibition_factor', 0.0))
+                    
+                    for result in query_list:
+                        factor = result.get('inhibition_factor', 0.0)
+                        response = result.get('response', 'No response generated')
                         
-                    for factor, response in sorted(responses.items()):
-                        summary_file.write(f"-- Inhibition factor: {factor} --\n")
-                        # Handle the case where response might be None
-                        if response is None:
-                            summary_file.write("[No response generated]\n")
-                        else:
-                            summary_file.write(str(response))
-                        summary_file.write("\n\n" + "-"*80 + "\n\n")
+                        f.write(f"INHIBITION FACTOR: {factor}\n\n")
+                        f.write(f"RESPONSE:\n{response}\n\n")
+                        f.write("-" * 40 + "\n\n")
+                    
+                    f.write("=" * 80 + "\n\n")
             
-            print(f"Saved combined summary to {output_dir}/{model_shortname}_all_outputs.txt")
+            print(f"Saved combined outputs to {output_file}")
+            
+            # Create individual files for each query
+            for query, query_list in query_results.items():
+                # Create a safe filename from the query
+                query_filename = query.replace(" ", "_").replace("?", "").replace(".", "")[:30]
+                query_filename = ''.join(c for c in query_filename if c.isalnum() or c == '_')
+                
+                query_output_file = os.path.join(
+                    output_dir, f"{model_name_safe}_{query_filename}{suffix}.txt"
+                )
+                
+                with open(query_output_file, "w") as f:
+                    f.write(f"Results for query: {query}\n")
+                    f.write(f"Model: {self.model_name}\n")
+                    f.write(f"Timestamp: {timestamp}\n")
+                    f.write("-" * 80 + "\n\n")
+                    
+                    # Sort by inhibition factor
+                    query_list.sort(key=lambda x: x.get('inhibition_factor', 0.0))
+                    
+                    for result in query_list:
+                        factor = result.get('inhibition_factor', 0.0)
+                        response = result.get('response', 'No response generated')
+                        
+                        f.write(f"INHIBITION FACTOR: {factor}\n\n")
+                        f.write(f"RESPONSE:\n{response}\n\n")
+                        f.write("-" * 40 + "\n\n")
+            
+            print(f"Saved individual query outputs to {output_dir}")
+                
         except Exception as e:
-            print(f"Error saving combined summary file: {e}")
-        
-        # Save individual files for each query and inhibition factor
-        for query, responses in results.items():
-            # Create a safe filename from the query
-            query_filename = query.replace(" ", "_").replace("?", "").replace(".", "").replace("/", "_")[:30]
-            
-            # Save a summary file for just this query
-            try:
-                with open(f"{output_dir}/{model_shortname}_{query_filename}_summary.txt", "w") as f:
-                    f.write(f"Query: {query}\n\n")
-                    f.write(f"Generated on: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n")
-                    
-                    if not responses:
-                        f.write("No responses generated for this query.\n")
-                        continue
-                    
-                    for factor, response in sorted(responses.items()):
-                        f.write(f"\n-- Inhibition factor: {factor} --\n\n")
-                        # Handle the case where response might be None
-                        if response is None:
-                            f.write("[No response generated]\n")
-                        else:
-                            f.write(str(response))
-                        f.write("\n\n" + "-"*40 + "\n")
-            except Exception as e:
-                print(f"Error saving summary for query '{query}': {e}")
-            
-            # Save individual files for each inhibition factor
-            for factor, response in responses.items():
-                try:
-                    filename = f"{output_dir}/{model_shortname}_{query_filename}_inhibition_{factor}.txt"
-                    
-                    with open(filename, "w") as f:
-                        f.write(f"Query: {query}\n")
-                        f.write(f"Inhibition factor: {factor}\n")
-                        f.write(f"Generated on: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n")
-                        
-                        # Handle the case where response might be None
-                        if response is None:
-                            f.write("[No response generated]\n")
-                        else:
-                            f.write(str(response))
-                except Exception as e:
-                    print(f"Error saving output for query '{query}' with factor {factor}: {e}")
-                    
-        print(f"Saved query outputs to individual files in {output_dir}/")
+            print(f"Error saving query outputs: {e}")
 
 
 # Example usage
@@ -1062,9 +1305,11 @@ if __name__ == "__main__":
     
     # Run the experiment
     results = experiment.run_experiment(
+        use_inhibition=True,
         queries=test_queries,
-        inhibition_factors=[0.0, 0.3, 0.5, 0.7, 0.9],
-        max_new_tokens=200
+        n_chunks=100,
+        num_inhibition_factors=5,
+        chunk_size=512
     )
     
     # Analyze results
