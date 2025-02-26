@@ -470,15 +470,58 @@ class DefaultModeNetworkExperiment:
         attention_masks = {}
         
         try:
+            print("Creating attention masks...")
+            # Check for any potential layer_idx that might be out of bounds
+            max_layer = -1
+            for layer_idx, head_idx, _ in self.top_default_mode_heads:
+                if layer_idx > max_layer:
+                    max_layer = layer_idx
+            
+            if max_layer >= self.num_layers:
+                print(f"Warning: Some DMN heads reference layers beyond model capacity (max:{max_layer}, model:{self.num_layers})")
+                print("Filtering out-of-bound layers...")
+                filtered_heads = [h for h in self.top_default_mode_heads if h[0] < self.num_layers]
+                self.top_default_mode_heads = filtered_heads
+                print(f"Filtered heads to {len(filtered_heads)} valid heads")
+            
+            # Check for any head_idx that might be out of bounds
+            invalid_heads = []
+            for layer_idx, head_idx, _ in self.top_default_mode_heads:
+                if head_idx >= self.num_heads:
+                    invalid_heads.append((layer_idx, head_idx))
+                    
+            if invalid_heads:
+                print(f"Warning: Some DMN heads reference heads beyond model capacity (model has {self.num_heads} heads per layer)")
+                print(f"Invalid head indices: {invalid_heads}")
+                print("Filtering invalid heads...")
+                filtered_heads = [h for h in self.top_default_mode_heads if h[1] < self.num_heads]
+                self.top_default_mode_heads = filtered_heads
+                print(f"Filtered to {len(filtered_heads)} valid heads")
+            
+            # Now create the attention masks with validated heads
             for layer_idx, head_idx, _ in self.top_default_mode_heads:
                 if layer_idx not in attention_masks:
                     attention_masks[layer_idx] = {}
                 attention_masks[layer_idx][head_idx] = inhibition_factor
+            
+            print(f"Created attention masks for {len(attention_masks)} layers")
+            
         except Exception as e:
             print(f"Error creating attention masks: {e}")
             print(f"top_default_mode_heads format: {self.top_default_mode_heads[:3]}")
             raise
         
+        # Check if using Flash Attention
+        is_using_flash_attn = False
+        if hasattr(self.model, "model") and hasattr(self.model.model, "layers"):
+            # For models like LLaMA and Mistral
+            if hasattr(self.model.model.layers[0].self_attn, "flash_attn"):
+                is_using_flash_attn = self.model.model.layers[0].self_attn.flash_attn
+        
+        if is_using_flash_attn:
+            print("Model is using Flash Attention. DMN inhibition may work differently.")
+            print("Attempting to use alternative inhibition method...")
+            
         # Apply attention inhibition during generation
         inhibited_output = self._generate_with_attention_inhibition(
             prompt, 
@@ -660,33 +703,97 @@ class DefaultModeNetworkExperiment:
             
         results = {}
         
-        for query in queries:
+        # Try to process at least one query even if others fail
+        at_least_one_succeeded = False
+        
+        for query_index, query in enumerate(queries):
+            print(f"\n===== Processing query {query_index+1}/{len(queries)}: '{query}' =====")
             results[query] = {}
             
-            for factor in inhibition_factors:
-                print(f"\nTesting query: '{query}' with inhibition factor {factor}")
+            try:
+                for factor in inhibition_factors:
+                    print(f"\nTesting query: '{query}' with inhibition factor {factor}")
+                    
+                    try:
+                        if factor == 0.0:
+                            # Just run the model normally
+                            print("Running normal generation without inhibition...")
+                            inputs = self.tokenizer(query, return_tensors="pt").to(device)
+                            with torch.no_grad():
+                                outputs = self.model.generate(
+                                    inputs.input_ids,
+                                    max_new_tokens=max_new_tokens,
+                                    do_sample=True,
+                                    temperature=0.7,
+                                    top_p=0.9,
+                                )
+                            output = self.tokenizer.decode(outputs[0], skip_special_tokens=True)
+                            print(f"Normal generation completed, output length: {len(output)} chars")
+                            results[query][factor] = output
+                            
+                            # Save intermediate results after each successful generation
+                            if not at_least_one_succeeded:
+                                print("Saving intermediate results...")
+                                self.save_query_outputs(results, output_dir="query_outputs_interim")
+                                at_least_one_succeeded = True
+                                
+                        else:
+                            # Run with inhibition
+                            print(f"Running generation with inhibition factor {factor}...")
+                            try:
+                                normal_output, inhibited_output = self.generate_with_inhibition(
+                                    query, 
+                                    inhibition_factor=factor,
+                                    max_new_tokens=max_new_tokens
+                                )
+                                print(f"Inhibited generation completed, output length: {len(inhibited_output)} chars")
+                                results[query][factor] = inhibited_output
+                                
+                                # Save intermediate results after each successful generation
+                                if not at_least_one_succeeded:
+                                    print("Saving intermediate results...")
+                                    self.save_query_outputs(results, output_dir="query_outputs_interim")
+                                    at_least_one_succeeded = True
+                                
+                            except Exception as inhibition_err:
+                                print(f"Error during inhibited generation: {inhibition_err}")
+                                # Add a placeholder response
+                                results[query][factor] = f"[Error generating with inhibition factor {factor}: {str(inhibition_err)}]"
+                                
+                                # Try to run normal generation as fallback
+                                print("Attempting fallback to normal generation...")
+                                inputs = self.tokenizer(query, return_tensors="pt").to(device)
+                                with torch.no_grad():
+                                    outputs = self.model.generate(
+                                        inputs.input_ids,
+                                        max_new_tokens=max_new_tokens,
+                                        do_sample=True,
+                                        temperature=0.7,
+                                        top_p=0.9,
+                                    )
+                                output = self.tokenizer.decode(outputs[0], skip_special_tokens=True)
+                                results[query][factor] = f"[Fallback to normal generation due to error: {str(inhibition_err)}]\n\n{output}"
+                    
+                    except Exception as factor_err:
+                        print(f"Error processing inhibition factor {factor}: {factor_err}")
+                        results[query][factor] = f"[Error with factor {factor}: {str(factor_err)}]"
+                        
+                    # Save results after each factor is processed
+                    if query_index == 0 or (query_index > 0 and factor == inhibition_factors[-1]):
+                        print("Saving current results...")
+                        self.save_query_outputs(results)
                 
-                if factor == 0.0:
-                    # Just run the model normally
-                    inputs = self.tokenizer(query, return_tensors="pt").to(device)
-                    with torch.no_grad():
-                        outputs = self.model.generate(
-                            inputs.input_ids,
-                            max_new_tokens=max_new_tokens,
-                            do_sample=True,
-                            temperature=0.7,
-                            top_p=0.9,
-                        )
-                    output = self.tokenizer.decode(outputs[0], skip_special_tokens=True)
-                    results[query][factor] = output
-                else:
-                    # Run with inhibition
-                    _, inhibited_output = self.generate_with_inhibition(
-                        query, 
-                        inhibition_factor=factor,
-                        max_new_tokens=max_new_tokens
-                    )
-                    results[query][factor] = inhibited_output
+            except Exception as query_err:
+                print(f"Error processing query '{query}': {query_err}")
+                results[query]["error"] = f"Failed to process query: {str(query_err)}"
+                
+            # Save results after each query is processed
+            print(f"Completed query: '{query}', saving results...")
+            self.save_query_outputs(results)
+            
+        # Final save of all results
+        print("Experiment completed, saving final results...")
+        self.save_query_outputs(results)
         
         return results
     
@@ -834,6 +941,15 @@ class DefaultModeNetworkExperiment:
             results: Results dictionary from run_experiment
             output_dir: Directory to save the output files
         """
+        if not results:
+            print("Warning: No results to save")
+            # Create an empty placeholder file to show the process ran
+            os.makedirs(output_dir, exist_ok=True)
+            with open(f"{output_dir}/no_results.txt", "w") as f:
+                f.write("No results were generated during the experiment.\n")
+                f.write(f"Timestamp: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+            return
+        
         # Create the output directory if it doesn't exist
         os.makedirs(output_dir, exist_ok=True)
         
@@ -843,32 +959,77 @@ class DefaultModeNetworkExperiment:
         print(f"Saving query outputs to {output_dir}/")
         
         # Save a combined summary file
-        with open(f"{output_dir}/{model_shortname}_all_outputs.txt", "w") as summary_file:
-            summary_file.write(f"== Experiment results for {self.model_name} ==\n\n")
-            
-            for query, responses in results.items():
-                summary_file.write(f"\n\n==== QUERY: {query} ====\n\n")
+        try:
+            with open(f"{output_dir}/{model_shortname}_all_outputs.txt", "w") as summary_file:
+                summary_file.write(f"== Experiment results for {self.model_name} ==\n\n")
+                summary_file.write(f"Generated on: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n")
+                summary_file.write(f"Model has {self.num_layers} layers and {self.num_heads} heads per layer\n\n")
                 
-                for factor, response in sorted(responses.items()):
-                    summary_file.write(f"-- Inhibition factor: {factor} --\n")
-                    summary_file.write(response)
-                    summary_file.write("\n\n" + "-"*80 + "\n\n")
+                for query, responses in results.items():
+                    summary_file.write(f"\n\n==== QUERY: {query} ====\n\n")
+                    
+                    if not responses:
+                        summary_file.write("No responses generated for this query.\n")
+                        continue
+                        
+                    for factor, response in sorted(responses.items()):
+                        summary_file.write(f"-- Inhibition factor: {factor} --\n")
+                        # Handle the case where response might be None
+                        if response is None:
+                            summary_file.write("[No response generated]\n")
+                        else:
+                            summary_file.write(str(response))
+                        summary_file.write("\n\n" + "-"*80 + "\n\n")
+            
+            print(f"Saved combined summary to {output_dir}/{model_shortname}_all_outputs.txt")
+        except Exception as e:
+            print(f"Error saving combined summary file: {e}")
         
         # Save individual files for each query and inhibition factor
         for query, responses in results.items():
             # Create a safe filename from the query
-            query_filename = query.replace(" ", "_").replace("?", "").replace(".", "")[:30]
+            query_filename = query.replace(" ", "_").replace("?", "").replace(".", "").replace("/", "_")[:30]
             
+            # Save a summary file for just this query
+            try:
+                with open(f"{output_dir}/{model_shortname}_{query_filename}_summary.txt", "w") as f:
+                    f.write(f"Query: {query}\n\n")
+                    f.write(f"Generated on: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n")
+                    
+                    if not responses:
+                        f.write("No responses generated for this query.\n")
+                        continue
+                    
+                    for factor, response in sorted(responses.items()):
+                        f.write(f"\n-- Inhibition factor: {factor} --\n\n")
+                        # Handle the case where response might be None
+                        if response is None:
+                            f.write("[No response generated]\n")
+                        else:
+                            f.write(str(response))
+                        f.write("\n\n" + "-"*40 + "\n")
+            except Exception as e:
+                print(f"Error saving summary for query '{query}': {e}")
+            
+            # Save individual files for each inhibition factor
             for factor, response in responses.items():
-                filename = f"{output_dir}/{model_shortname}_{query_filename}_inhibition_{factor}.txt"
-                
-                with open(filename, "w") as f:
-                    f.write(f"Query: {query}\n")
-                    f.write(f"Inhibition factor: {factor}\n\n")
-                    f.write(response)
+                try:
+                    filename = f"{output_dir}/{model_shortname}_{query_filename}_inhibition_{factor}.txt"
+                    
+                    with open(filename, "w") as f:
+                        f.write(f"Query: {query}\n")
+                        f.write(f"Inhibition factor: {factor}\n")
+                        f.write(f"Generated on: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n")
+                        
+                        # Handle the case where response might be None
+                        if response is None:
+                            f.write("[No response generated]\n")
+                        else:
+                            f.write(str(response))
+                except Exception as e:
+                    print(f"Error saving output for query '{query}' with factor {factor}: {e}")
                     
         print(f"Saved query outputs to individual files in {output_dir}/")
-        print(f"Saved combined summary to {output_dir}/{model_shortname}_all_outputs.txt")
 
 
 # Example usage
