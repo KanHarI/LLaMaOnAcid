@@ -43,7 +43,7 @@ class DefaultModeNetworkExperiment:
             model_name,
             cache_dir=cache_dir,
             device_map="auto",  # Automatically distribute across available GPUs
-            load_in_8bit=True,  # Use 8-bit quantization
+            # load_in_8bit=True,  # Use 8-bit quantization
             torch_dtype=torch.float16,  # Use half precision
             attn_implementation="flash_attention_2",  # Use FlashAttention for better memory efficiency
         )
