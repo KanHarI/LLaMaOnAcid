@@ -380,16 +380,46 @@ class DefaultModeNetworkExperiment:
         Args:
             filepath: Path to the saved data
         """
-        with open(filepath, "rb") as f:
-            data = pickle.load(f)
-        
-        self.head_importance_scores = data["head_importance_scores"]
-        self.top_default_mode_heads = data["top_default_mode_heads"]
-        
-        print(f"Loaded default mode network from {filepath}")
-        print(f"Top heads in the default mode network:")
-        for layer_idx, head_idx, score in self.top_default_mode_heads[:10]:
-            print(f"  Layer {layer_idx}, Head {head_idx}: Activation {score:.4f}")
+        try:
+            with open(filepath, "rb") as f:
+                data = pickle.load(f)
+            
+            # Check if the saved model matches the current model
+            if "model_name" in data and data["model_name"] != self.model_name:
+                print(f"Warning: Loading default mode network identified on {data['model_name']}")
+                print(f"Current model is {self.model_name}")
+                print("The head indices may not be compatible between different models.")
+                
+            # Load data with error handling for different formats
+            if "head_importance_scores" in data:
+                self.head_importance_scores = data["head_importance_scores"]
+            else:
+                print("Warning: head_importance_scores not found in saved data")
+                
+            if "top_default_mode_heads" in data:
+                self.top_default_mode_heads = data["top_default_mode_heads"]
+            else:
+                print("Warning: top_default_mode_heads not found in saved data")
+                # If we have importance scores but no top heads, select them now
+                if self.head_importance_scores:
+                    print("Selecting top heads from importance scores...")
+                    self.select_top_default_mode_heads(top_n=30)
+            
+            # Validate the loaded data
+            if not self.top_default_mode_heads:
+                raise ValueError("Failed to load top_default_mode_heads from file")
+                
+            print(f"Loaded default mode network from {filepath}")
+            print(f"Top heads in the default mode network:")
+            for layer_idx, head_idx, score in self.top_default_mode_heads[:10]:
+                print(f"  Layer {layer_idx}, Head {head_idx}: Activation {score:.4f}")
+                
+            if len(self.top_default_mode_heads) > 10:
+                print(f"  ... plus {len(self.top_default_mode_heads)-10} more heads")
+                
+        except Exception as e:
+            print(f"Error loading default mode network from {filepath}: {e}")
+            raise
     
     def generate_with_inhibition(self, 
                                 prompt: str, 
@@ -407,8 +437,15 @@ class DefaultModeNetworkExperiment:
         Returns:
             Tuple of (normal_output, inhibited_output)
         """
+        # Provide more detailed error message if top_default_mode_heads is not set
         if not self.top_default_mode_heads:
-            raise ValueError("Must identify default mode network first")
+            # Check if head_importance_scores exists but top_default_mode_heads wasn't selected
+            if self.head_importance_scores:
+                print("Head importance scores exist but no top heads were selected.")
+                print("Automatically selecting top 30 heads...")
+                self.select_top_default_mode_heads(top_n=30)
+            else:
+                raise ValueError("Default mode network not identified. Please run identify_default_mode_network() and select_top_default_mode_heads() first, or load a saved network with load_default_mode_network().")
         
         # Tokenize prompt
         inputs = self.tokenizer(prompt, return_tensors="pt").to(device)
@@ -431,10 +468,16 @@ class DefaultModeNetworkExperiment:
         
         # Create attention mask for inhibiting specific heads
         attention_masks = {}
-        for layer_idx, head_idx, _ in self.top_default_mode_heads:
-            if layer_idx not in attention_masks:
-                attention_masks[layer_idx] = {}
-            attention_masks[layer_idx][head_idx] = inhibition_factor
+        
+        try:
+            for layer_idx, head_idx, _ in self.top_default_mode_heads:
+                if layer_idx not in attention_masks:
+                    attention_masks[layer_idx] = {}
+                attention_masks[layer_idx][head_idx] = inhibition_factor
+        except Exception as e:
+            print(f"Error creating attention masks: {e}")
+            print(f"top_default_mode_heads format: {self.top_default_mode_heads[:3]}")
+            raise
         
         # Apply attention inhibition during generation
         inhibited_output = self._generate_with_attention_inhibition(
@@ -525,7 +568,8 @@ class DefaultModeNetworkExperiment:
     def run_experiment(self, 
                      queries: List[str], 
                      inhibition_factors: List[float] = [0.0, 0.3, 0.5, 0.7, 0.9],
-                     max_new_tokens: int = 200) -> Dict:
+                     max_new_tokens: int = 200,
+                     dmn_file: Optional[str] = None) -> Dict:
         """
         Run the experiment with multiple queries and inhibition factors.
         
@@ -533,10 +577,27 @@ class DefaultModeNetworkExperiment:
             queries: List of queries to test
             inhibition_factors: List of inhibition factors to try
             max_new_tokens: Maximum tokens to generate for each query
+            dmn_file: Path to a saved default mode network file to load (if not already loaded)
             
         Returns:
             Dictionary of experimental results
         """
+        # Check if we have default mode network heads
+        if not self.top_default_mode_heads and dmn_file:
+            print(f"Default mode network not loaded, attempting to load from {dmn_file}")
+            try:
+                self.load_default_mode_network(dmn_file)
+            except Exception as e:
+                print(f"Error loading default mode network: {e}")
+                print("Please run identify_default_mode_network() and select_top_default_mode_heads() first")
+                return {}
+        
+        # Double check that we have heads selected
+        if not self.top_default_mode_heads:
+            print("No default mode network heads selected.")
+            print("Please run identify_default_mode_network() and select_top_default_mode_heads() first")
+            return {}
+            
         results = {}
         
         for query in queries:

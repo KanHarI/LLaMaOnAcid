@@ -56,7 +56,8 @@ print("Running experiment with various inhibition factors...")
 results = experiment.run_experiment(
     queries=test_queries,
     inhibition_factors=[0.0, 0.3, 0.5, 0.7, 0.9],
-    max_new_tokens=150  # Fewer tokens for faster generation
+    max_new_tokens=150,  # Fewer tokens for faster generation
+    dmn_file="mistral_7b_default_mode_network.pkl"  # Pass the DMN file
 )
 
 # Analyze results
