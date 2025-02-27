@@ -1,6 +1,6 @@
 #!/bin/bash
 
-pip install flash-attn==2.3.4 --no-build-isolation
+# pip install flash-attn==2.3.4 --no-build-isolation 
 
 # Configuration
 MODEL_NAME="mistralai/Mistral-7B-v0.1"
