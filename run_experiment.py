@@ -9,7 +9,7 @@ from datetime import datetime
 
 import torch
 
-from llama_on_acid.config import DEFAULT_MODEL_NAME, DEFAULT_QUERIES, DMN_CONFIG
+from llama_on_acid.config import DEFAULT_INHIBITION_FACTORS, DEFAULT_MODEL_NAME, DEFAULT_QUERIES, DMN_CONFIG
 from llama_on_acid.experiment import DefaultModeNetworkExperiment
 from llama_on_acid.utils import get_git_commit_hash
 
@@ -75,7 +75,7 @@ def main() -> None:
         "--factors",
         type=float,
         nargs="*",
-        default=[0.0, 0.3, 0.5, 0.7, 0.9],
+        default=DEFAULT_INHIBITION_FACTORS,
         help="Inhibition factors to use (default: 0.0, 0.3, 0.5, 0.7, 0.9)",
     )
     
