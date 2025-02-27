@@ -2,49 +2,49 @@
 
 # Configuration
 MODEL_NAME="mistralai/Mistral-7B-v0.1"
-OUTPUT_DIR="query_outputs"
+OUTPUT_DIR="mistral_experiment_$(date +"%Y%m%d_%H%M%S")"
 DMN_FILE="dmn_heads_mistral-7b-v0.1.json"
 
-# Create output directory if it doesn't exist
+# Create output directory
 mkdir -p $OUTPUT_DIR
 
-# Run the experiment
-python -c "
-import main
-import torch
+echo "=========================================="
+echo "🧠 LLaMaOnAcid Mistral Experiment 🔮"
+echo "=========================================="
 
-# Set device
-device = 'cuda' if torch.cuda.is_available() else 'cpu'
-print(f'Using device: {device}')
+echo "Model: $MODEL_NAME"
+echo "Output directory: $OUTPUT_DIR"
+if [ -f "$DMN_FILE" ]; then
+    echo "Using pre-identified DMN file: $DMN_FILE"
+fi
 
-# Define test queries
-test_queries = [
-    'What is the meaning of life?',
-    'Tell me about the history of Rome.',
-    'Explain quantum physics.',
-    'What are the major challenges facing humanity?',
-    'How does the brain work?'
-]
+echo -e "\n📊 Running experiment...\n"
 
-# Initialize experiment
-experiment = main.DefaultModeNetworkExperiment(
-    model_name='$MODEL_NAME', 
-    device=device
+# Create a log file
+LOG_FILE="${OUTPUT_DIR}/experiment_log.txt"
+touch "$LOG_FILE"
+
+# Set up logging to both terminal and file
+exec > >(tee -a "$LOG_FILE") 2>&1
+
+# Test queries
+QUERIES=(
+    "What is the meaning of life?"
+    "Tell me about the history of Rome."
+    "Explain quantum physics."
+    "What are the major challenges facing humanity?"
+    "How does the brain work?"
 )
 
-# Run the experiment
-results = experiment.run_experiment(
-    use_inhibition=True,
-    queries=test_queries,
-    n_chunks=100,
-    num_inhibition_factors=5,
-    chunk_size=512,
-    dmn_file='$DMN_FILE' if '$DMN_FILE' else None,
-    use_cache=True,
-    force_article_refresh=False
-)
+# Convert array to space-separated string for command-line arguments
+QUERIES_STR="${QUERIES[*]}"
 
-print('Experiment completed. Results saved to $OUTPUT_DIR')
-"
+# Run the experiment using the new command-line interface
+./run_experiment.py \
+    --model "$MODEL_NAME" \
+    --output-dir "$OUTPUT_DIR" \
+    --queries $QUERIES_STR \
+    $([ -f "$DMN_FILE" ] && echo "--dmn-file $DMN_FILE")
 
-echo "Script execution completed" 
+echo -e "\n✅ Experiment completed!"
+echo "Results saved to $OUTPUT_DIR/" 

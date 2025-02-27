@@ -31,90 +31,28 @@ MAX_TOKENS=200                      # Max tokens to generate per response
 echo "Model: $MODEL_NAME"
 echo "Sample size: $SAMPLE_SIZE"
 echo "DMN heads: $TOP_HEADS"
-echo "Inhibition factor: $INHIBITION_FACTOR"
+echo "Inhibition factors: 0.0, $INHIBITION_FACTOR"
+echo "Max tokens: $MAX_TOKENS"
 
 echo -e "\n📊 Running experiment...\n"
 
-# Run the experiment
-python3 -c "
-import sys
-import os
-from main import DefaultModeNetworkExperiment
+# Create a log file
+LOG_FILE="${OUTPUT_DIR}/experiment_log.txt"
+touch "$LOG_FILE"
 
-# Redirect stdout to file and terminal
-class Logger:
-    def __init__(self, filename):
-        self.terminal = sys.stdout
-        self.log = open(filename, 'w')
-    
-    def write(self, message):
-        self.terminal.write(message)
-        self.log.write(message)
-        
-    def flush(self):
-        self.terminal.flush()
-        self.log.flush()
+# Set up logging to both terminal and file
+exec > >(tee -a "$LOG_FILE") 2>&1
 
-# Set up logging
-sys.stdout = Logger('${OUTPUT_DIR}/experiment_log.txt')
-
-# Print header
-print('\\n== Starting LLaMaOnAcid Experiment ==\\n')
-
-# Initialize experiment
-print('Initializing experiment with model ${MODEL_NAME}...')
-experiment = DefaultModeNetworkExperiment(model_name='${MODEL_NAME}')
-
-# Identify default mode network
-print('\\nIdentifying default mode network...')
-experiment.fetch_top_wikipedia_articles(n=30)
-experiment.prepare_text_chunks(chunk_size=512)
-experiment.identify_default_mode_network(sample_size=${SAMPLE_SIZE})
-experiment.select_top_default_mode_heads(top_n=${TOP_HEADS})
-
-# Save the identified network
-print('\\nSaving identified default mode network...')
-experiment.save_default_mode_network('${OUTPUT_DIR}/dmn_network.pkl')
-
-# Visualize network
-print('\\nVisualizing default mode network...')
-experiment.visualize_default_mode_network(save_path='${OUTPUT_DIR}/dmn_visualization.png')
-
-# Test prompts
-test_prompts = [
-    'What is consciousness?',
-    'Explain the concept of free will.',
-    'Write a short poem about the universe.'
-]
-
-# Run generation tests
-print('\\nRunning generation tests with and without DMN inhibition...')
-for prompt in test_prompts:
-    print(f'\\n== Testing prompt: \"{prompt}\" ==')
-    
-    normal, inhibited = experiment.generate_with_inhibition(
-        prompt=prompt,
-        inhibition_factor=${INHIBITION_FACTOR},
-        max_new_tokens=${MAX_TOKENS}
-    )
-    
-    print('\\nNORMAL OUTPUT:')
-    print(normal)
-    print('\\nINHIBITED OUTPUT (PSYCHEDELIC MODE):')
-    print(inhibited)
-    
-    # Save outputs to files
-    prompt_filename = prompt.replace(' ', '_').replace('?', '').lower()[:20]
-    with open(f'${OUTPUT_DIR}/normal_{prompt_filename}.txt', 'w') as f:
-        f.write(normal)
-    with open(f'${OUTPUT_DIR}/inhibited_{prompt_filename}.txt', 'w') as f:
-        f.write(inhibited)
-
-print('\\n== Experiment complete! ==')
-print(f'Results saved to ${OUTPUT_DIR}/')
-"
+# Run the experiment using the new command-line interface
+./run_experiment.py \
+    --model "$MODEL_NAME" \
+    --n-chunks "$SAMPLE_SIZE" \
+    --max-tokens "$MAX_TOKENS" \
+    --output-dir "$OUTPUT_DIR" \
+    --factors 0.0 "$INHIBITION_FACTOR" \
+    --queries "What is consciousness?" "Explain the concept of free will." "Write a short poem about the universe."
 
 echo -e "\n✅ Experiment completed!"
 echo "Results saved to $OUTPUT_DIR/"
-echo -e "\nTo view the visualization, open: $OUTPUT_DIR/dmn_visualization.png"
+echo -e "\nTo view the visualization, open: $OUTPUT_DIR/*/dmn_visualization.png"
 echo "To compare outputs, check the text files in: $OUTPUT_DIR/" 

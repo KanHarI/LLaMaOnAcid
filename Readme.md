@@ -18,6 +18,32 @@ LLaMaOnAcid explores the fascinating hypothesis that large language models (LLMs
 - Includes visualization and analysis tools for experimental results
 - Supports customizable experiments with different prompts and inhibition strengths
 
+## Project Structure
+
+The codebase has been refactored into a modular package structure:
+
+```
+llama_on_acid/
+├── __init__.py
+├── config.py               # Central configuration settings
+├── experiment.py           # Main experiment orchestration
+├── data/
+│   ├── __init__.py
+│   ├── wikipedia.py        # Wikipedia article fetching
+│   └── processor.py        # Text chunk processing
+├── model/
+│   ├── __init__.py
+│   ├── dmn_identifier.py   # Default mode network identification
+│   └── inhibited_generator.py  # Text generation with DMN inhibition
+├── visualization/
+│   ├── __init__.py
+│   └── visualizer.py       # Visualization and analysis of results
+└── utils/
+    └── __init__.py
+
+run_experiment.py           # Command-line entry point
+```
+
 ## Installation
 
 ```bash
@@ -39,12 +65,38 @@ pip install -r requirements.txt
 
 ## Usage
 
-### Basic Example
+### Command-line Interface
+
+The simplest way to run an experiment is using the command-line interface:
+
+```bash
+# Run with default settings (uses Llama-3-8b model)
+python run_experiment.py
+
+# Run with a custom model and specific settings
+python run_experiment.py --model meta-llama/Llama-3-70b \
+                        --queries "What is the meaning of life?" "Describe a new color" \
+                        --factors 0.0 0.5 0.9 \
+                        --max-tokens 300 \
+                        --output-dir my_experiments
+```
+
+### Shell Scripts
+
+We also provide several shell scripts for convenience:
+
+- `run_experiment.sh`: Basic experiment with standard settings
+- `run_multi_gpu_experiment.sh`: For running on systems with multiple GPUs
+- `run_mistral_experiment.sh`: Specifically configured for Mistral models
+
+### Python API
+
+You can also use the Python API for more customized experiments:
 
 ```python
-from main import DefaultModeNetworkExperiment
+from llama_on_acid.experiment import DefaultModeNetworkExperiment
 
-# Initialize with a smaller model if you don't have enough VRAM
+# Initialize experiment
 experiment = DefaultModeNetworkExperiment(model_name="meta-llama/Llama-3-8b")
 
 # Identify the default mode network
@@ -111,6 +163,36 @@ With increasing inhibition of the default mode network, language models often ex
 - Occasional disorganized or less coherent text at high inhibition levels
 
 These patterns are analogous to effects observed in human creativity and cognition under psychedelics.
+
+## Advanced Usage
+
+### Using a Pre-identified DMN
+
+To save time on repeated experiments, you can save and load pre-identified DMNs:
+
+```python
+# Load a previously identified DMN
+experiment = DefaultModeNetworkExperiment(model_name="meta-llama/Llama-3-8b")
+experiment.load_default_mode_network("saved_dmn.pkl")
+
+# Now you can generate directly, skipping the identification phase
+normal, inhibited = experiment.generate_with_inhibition(
+    prompt="What would happen if humans could photosynthesize?",
+    inhibition_factor=0.7
+)
+```
+
+### Customizing Caching Behavior
+
+The system uses caching to avoid re-downloading Wikipedia articles or re-processing model activations:
+
+```bash
+# Disable caching for a fresh run
+python run_experiment.py --no-cache
+
+# Force a refresh of Wikipedia articles
+python run_experiment.py --force-refresh
+```
 
 ## License
 
