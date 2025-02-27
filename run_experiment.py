@@ -113,7 +113,7 @@ def main() -> None:
         use_cache=not args.no_cache,
         force_article_refresh=args.force_refresh,
         output_dir=output_dir,
-        save_intermediate=not args.no_save_intermediate,
+        save_intermediate=True,
     )
 
     # Save the full results

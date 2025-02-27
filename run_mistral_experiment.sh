@@ -40,7 +40,7 @@ QUERIES=(
 )
 
 # Run the experiment using the command-line interface with properly quoted queries
-# Now saving intermediate files but avoiding duplication with our code changes
+# Now saving intermediate files by query to avoid duplication
 ./run_experiment.py \
     --model "$MODEL_NAME" \
     --output-dir "$OUTPUT_DIR" \

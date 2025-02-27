@@ -565,18 +565,20 @@ class DefaultModeNetworkExperiment:
                     debug_log(f"  Error generating response for factor {factor}: {e}", is_important=True)
                     print(f"  Error generating response for factor {factor}: {e}")
 
-            results.extend(query_results)
-
             # Save intermediate results after each query
             if query_results and save_intermediate:
                 debug_log(f"Saving intermediate results after query {q_idx+1}")
+                # Save only the new results for this query, not all accumulated results
                 save_query_outputs(
-                    results,
+                    query_results,  # Use only query_results instead of all results
                     model_name=self.model_name,
                     output_dir=output_dir,
-                    suffix=f"_intermediate_{len(results)}",
+                    suffix=f"_query_{q_idx+1}",  # Use query index in suffix instead of results length
                     save_individual_files=True,
                 )
+
+            # Extend the full results list with the new query results
+            results.extend(query_results)
 
         # Step 6: Save outputs
         debug_log("STEP 6: Saving final outputs", divider=True)
