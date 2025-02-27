@@ -38,14 +38,11 @@ QUERIES=(
     "How does the brain work?"
 )
 
-# Convert array to space-separated string for command-line arguments
-QUERIES_STR="${QUERIES[*]}"
-
-# Run the experiment using the new command-line interface
+# Run the experiment using the new command-line interface with properly quoted queries
 ./run_experiment.py \
     --model "$MODEL_NAME" \
     --output-dir "$OUTPUT_DIR" \
-    --queries $QUERIES_STR \
+    --queries "${QUERIES[@]}" \
     $([ -f "$DMN_FILE" ] && echo "--dmn-file $DMN_FILE")
 
 echo -e "\n✅ Experiment completed!"

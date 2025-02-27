@@ -35,6 +35,19 @@ from .visualization.visualizer import (
     visualize_default_mode_network,
 )
 
+# Add debug logging function
+def debug_log(msg: str, is_important: bool = False, divider: bool = False) -> None:
+    """Helper function to print consistent debug logs with timestamps."""
+    timestamp = datetime.now().strftime("%H:%M:%S.%f")[:-3]
+    if divider:
+        print(f"\n{'=' * 80}")
+    if is_important:
+        print(f"\n[DEBUG {timestamp}] 🔍 {msg} 🔍")
+    else:
+        print(f"[DEBUG {timestamp}] {msg}")
+    if divider:
+        print(f"{'=' * 80}\n")
+
 
 class DefaultModeNetworkExperiment:
     """
@@ -55,6 +68,7 @@ class DefaultModeNetworkExperiment:
             device: The device to use (cuda or cpu)
             cache_dir: Directory to store cached data
         """
+        debug_log("INIT: Starting DefaultModeNetworkExperiment initialization", is_important=True, divider=True)
         self.model_name = model_name
         print(f"Initializing experiment with model: {model_name}")
 
@@ -63,6 +77,7 @@ class DefaultModeNetworkExperiment:
             self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         else:
             self.device = torch.device(device)
+        debug_log(f"Using device: {self.device}")
 
         # Create cache directory
         self.cache_dir = cache_dir or CACHE_DIR
@@ -71,31 +86,48 @@ class DefaultModeNetworkExperiment:
 
         # Initialize model and tokenizer
         print("Loading tokenizer and model...")
+        debug_log("Loading tokenizer...")
         self.tokenizer = AutoTokenizer.from_pretrained(model_name)
+        debug_log("Tokenizer loaded successfully")
 
         # For flash attention compatibility
-        self.model = AutoModelForCausalLM.from_pretrained(
-            model_name,
-            device_map=self.device,
-            torch_dtype=torch.float16,
-            attn_implementation="eager",  # Use eager implementation for compatibility
-        )
+        debug_log("Loading model with eager attention implementation...")
+        try:
+            self.model = AutoModelForCausalLM.from_pretrained(
+                model_name,
+                device_map=self.device,
+                torch_dtype=torch.float16,
+                attn_implementation="eager",  # Use eager implementation for compatibility
+            )
+            debug_log("Model loaded successfully with eager attention")
+        except Exception as e:
+            debug_log(f"Error loading model: {e}", is_important=True)
+            raise
         print("Model and tokenizer loaded")
 
         # Model dimensions
+        debug_log("Determining model dimensions...")
         if hasattr(self.model.config, "num_hidden_layers"):
             self.num_layers = self.model.config.num_hidden_layers
+            debug_log(f"Found num_hidden_layers: {self.num_layers}")
         elif hasattr(self.model.config, "n_layer"):
             self.num_layers = self.model.config.n_layer
+            debug_log(f"Found n_layer: {self.num_layers}")
         else:
-            raise ValueError("Could not determine number of layers in the model")
+            error_msg = "Could not determine number of layers in the model"
+            debug_log(error_msg, is_important=True)
+            raise ValueError(error_msg)
 
         if hasattr(self.model.config, "num_attention_heads"):
             self.num_heads = self.model.config.num_attention_heads
+            debug_log(f"Found num_attention_heads: {self.num_heads}")
         elif hasattr(self.model.config, "n_head"):
             self.num_heads = self.model.config.n_head
+            debug_log(f"Found n_head: {self.num_heads}")
         else:
-            raise ValueError("Could not determine number of attention heads in the model")
+            error_msg = "Could not determine number of attention heads in the model"
+            debug_log(error_msg, is_important=True)
+            raise ValueError(error_msg)
 
         print(f"Model has {self.num_layers} layers and {self.num_heads} attention heads per layer")
 
@@ -106,12 +138,16 @@ class DefaultModeNetworkExperiment:
         # Debug prints to help identify the issue
         print(f"model_name type: {type(self.model_name)}")
         print(f"model type: {type(self.model)}")
+        debug_log(f"Model config: {self.model.config}")
 
-        # Initialize DMN identifier - FIX: Pass the model object, not the model name string
+        # Initialize DMN identifier
+        debug_log("Initializing DMN identifier...", is_important=True)
         self.dmn_identifier = DefaultModeNetworkIdentifier(self.model, device=self.device, model_name=self.model_name)
+        debug_log("DMN identifier initialized successfully")
 
         # Initialize generator with proper type annotation
         self.generator: Optional[InhibitedGenerator] = None
+        debug_log("DefaultModeNetworkExperiment initialization complete", divider=True)
 
     def fetch_top_wikipedia_articles(
         self, n: int = 100, use_cache: bool = True, force_refresh: bool = False
@@ -127,6 +163,7 @@ class DefaultModeNetworkExperiment:
         Returns:
             List of article titles
         """
+        debug_log(f"FETCH_ARTICLES: Fetching top {n} Wikipedia articles (cache={use_cache}, force_refresh={force_refresh})", is_important=True)
         self.articles = fetch_top_wikipedia_articles(
             n=n,
             use_cache=use_cache,
@@ -134,6 +171,7 @@ class DefaultModeNetworkExperiment:
             cache_dir=self.cache_dir,
             model_name=self.model_name,
         )
+        debug_log(f"Fetched {len(self.articles)} articles")
         return self.articles
 
     def prepare_text_chunks(
@@ -149,7 +187,9 @@ class DefaultModeNetworkExperiment:
         Returns:
             List of text chunks
         """
+        debug_log(f"PREPARE_CHUNKS: Preparing text chunks (chunk_size={chunk_size}, use_cache={use_cache})", is_important=True)
         if not self.articles:
+            debug_log("No articles loaded. Fetching top Wikipedia articles first...")
             print("No articles loaded. Fetching top Wikipedia articles first...")
             self.fetch_top_wikipedia_articles()
 
@@ -161,7 +201,8 @@ class DefaultModeNetworkExperiment:
             cache_dir=self.cache_dir,
             model_name=self.model_name,
         )
-
+        
+        debug_log(f"Prepared {len(self.processed_chunks)} text chunks")
         return self.processed_chunks
 
     def identify_default_mode_network(
@@ -174,16 +215,20 @@ class DefaultModeNetworkExperiment:
             sample_size: Number of chunks to process
             use_cache: Whether to use cached activations if available
         """
+        debug_log(f"IDENTIFY_DMN: Starting DMN identification (sample_size={sample_size}, use_cache={use_cache})", is_important=True, divider=True)
         if not self.processed_chunks:
+            debug_log("No text chunks prepared. Preparing chunks first...")
             print("No text chunks prepared. Preparing chunks first...")
             self.prepare_text_chunks()
-
+        
+        debug_log(f"Using {min(sample_size, len(self.processed_chunks))} chunks for DMN identification")
         self.dmn_identifier.identify_default_mode_network(
             chunks=self.processed_chunks,
             tokenizer=self.tokenizer,
             sample_size=sample_size,
             use_cache=use_cache,
         )
+        debug_log("DMN identification complete", divider=True)
 
     def select_top_default_mode_heads(
         self, top_n: int = DEFAULT_TOP_HEADS
@@ -197,7 +242,10 @@ class DefaultModeNetworkExperiment:
         Returns:
             List of (layer_idx, head_idx, score) tuples
         """
-        return self.dmn_identifier.select_top_default_mode_heads(top_n=top_n)
+        debug_log(f"SELECT_TOP_HEADS: Selecting top {top_n} default mode heads", is_important=True)
+        tops = self.dmn_identifier.select_top_default_mode_heads(top_n=top_n)
+        debug_log(f"Selected {len(tops)} top default mode heads")
+        return tops
 
     def save_default_mode_network(self, filepath: str) -> None:
         """
@@ -224,20 +272,27 @@ class DefaultModeNetworkExperiment:
         """
         Initialize the inhibited generator with the identified DMN heads.
         """
+        debug_log("INIT_GENERATOR: Initializing inhibited generator", is_important=True)
         if not self.dmn_identifier.top_default_mode_heads:
-            raise ValueError(
-                "No default mode heads identified. Please run identify_default_mode_network() and select_top_default_mode_heads() first, or load a saved network."
-            )
+            error_msg = "No default mode heads identified. Please run identify_default_mode_network() and select_top_default_mode_heads() first, or load a saved network."
+            debug_log(error_msg, is_important=True)
+            raise ValueError(error_msg)
 
         assert self.model is not None, "Model must be initialized"
         assert self.tokenizer is not None, "Tokenizer must be initialized"
-
-        self.generator = InhibitedGenerator(
-            model=self.model,
-            tokenizer=self.tokenizer,
-            device=self.device,
-            top_default_mode_heads=self.dmn_identifier.top_default_mode_heads,
-        )
+        
+        debug_log(f"Creating generator with {len(self.dmn_identifier.top_default_mode_heads)} DMN heads")
+        try:
+            self.generator = InhibitedGenerator(
+                model=self.model,
+                tokenizer=self.tokenizer,
+                device=self.device,
+                top_default_mode_heads=self.dmn_identifier.top_default_mode_heads,
+            )
+            debug_log("Generator initialized successfully")
+        except Exception as e:
+            debug_log(f"Error initializing generator: {e}", is_important=True)
+            raise
 
     def generate_with_inhibition(
         self,
@@ -262,22 +317,34 @@ class DefaultModeNetworkExperiment:
         Returns:
             Tuple of (normal_output, inhibited_output)
         """
+        debug_log(f"GENERATE: Generating with inhibition_factor={inhibition_factor}", is_important=True)
+        debug_log(f"Prompt: '{prompt[:50]}...'")
+        
         # Initialize generator if not already done
         if self.generator is None:
+            debug_log("Generator not initialized, initializing now...")
             self._initialize_generator()
 
         # The generator should be initialized by now, but if it's still None, we have a problem
         if self.generator is None:
-            raise ValueError("Failed to initialize generator")
+            error_msg = "Failed to initialize generator"
+            debug_log(error_msg, is_important=True)
+            raise ValueError(error_msg)
 
-        return self.generator.generate_with_inhibition(
-            prompt=prompt,
-            inhibition_factor=inhibition_factor,
-            max_new_tokens=max_new_tokens,
-            temperature=temperature,
-            top_p=top_p,
-            do_sample=do_sample,
-        )
+        try:
+            results = self.generator.generate_with_inhibition(
+                prompt=prompt,
+                inhibition_factor=inhibition_factor,
+                max_new_tokens=max_new_tokens,
+                temperature=temperature,
+                top_p=top_p,
+                do_sample=do_sample,
+            )
+            debug_log("Generation successful")
+            return results
+        except Exception as e:
+            debug_log(f"Error during generation: {e}", is_important=True)
+            raise
 
     def visualize_default_mode_network(
         self, top_n: int = 100, save_path: Optional[str] = None
@@ -333,6 +400,9 @@ class DefaultModeNetworkExperiment:
         Returns:
             List of result dictionaries
         """
+        debug_log(f"RUN_EXPERIMENT: Starting full experiment with {self.model_name}", is_important=True, divider=True)
+        debug_log(f"Parameters: max_tokens={max_new_tokens}, n_chunks={n_chunks}, chunk_size={chunk_size}, use_cache={use_cache}")
+        
         print(f"Running experiment with {self.model_name}")
         results = []
         at_least_one_succeeded = False
@@ -340,53 +410,66 @@ class DefaultModeNetworkExperiment:
         # Set default values
         if queries is None:
             queries = DEFAULT_QUERIES
+        debug_log(f"Using {len(queries)} queries")
 
         if inhibition_factors is None:
             inhibition_factors = DEFAULT_INHIBITION_FACTORS
+        debug_log(f"Using inhibition factors: {inhibition_factors}")
 
         # Step 1: Fetch Wikipedia articles
         try:
+            debug_log("STEP 1: Fetching Wikipedia articles", divider=True)
             print("Fetching Wikipedia articles...")
             self.fetch_top_wikipedia_articles(
                 use_cache=use_cache, force_refresh=force_article_refresh
             )
             print(f"Fetched {len(self.articles)} articles")
         except Exception as e:
+            debug_log(f"Error fetching articles: {e}", is_important=True)
             print(f"Error fetching articles: {e}")
             print("Using fallback list of articles")
             self.articles = ["Philosophy", "Science", "History", "Mathematics", "Literature"]
+            debug_log(f"Using {len(self.articles)} fallback articles")
 
         # Step 2: Prepare text chunks
         try:
+            debug_log("STEP 2: Preparing text chunks", divider=True)
             print("Preparing text chunks...")
             self.prepare_text_chunks(chunk_size=chunk_size, use_cache=use_cache)
             print(f"Prepared {len(self.processed_chunks)} text chunks")
         except Exception as e:
+            debug_log(f"Error preparing text chunks: {e}", is_important=True)
             print(f"Error preparing text chunks: {e}")
             self.processed_chunks = ["This is a fallback text chunk." * 50]
+            debug_log("Using fallback text chunks")
 
         # Step 3 & 4: Load or identify default mode network
+        debug_log("STEP 3 & 4: Identifying default mode network", divider=True)
         if dmn_file and os.path.exists(dmn_file):
+            debug_log(f"Loading pre-identified DMN from {dmn_file}")
             print(f"Loading pre-identified DMN from {dmn_file}")
             self.load_default_mode_network(dmn_file)
         else:
             print("Identifying default mode network...")
             try:
+                debug_log("No DMN file provided or found, identifying DMN...")
                 self.identify_default_mode_network(
                     sample_size=min(n_chunks, len(self.processed_chunks)), use_cache=use_cache
                 )
+                debug_log("Selecting top default mode heads...")
                 self.select_top_default_mode_heads()
+                debug_log("Initializing generator with identified DMN heads...")
                 self._initialize_generator()
             except Exception as e:
+                debug_log(f"Error identifying default mode network: {e}", is_important=True)
                 print(f"Error identifying default mode network: {e}")
                 print("Using fallback default mode network")
-                # Create a fallback DMN
-                # Use a more conservative approach with fewer heads for the fallback
-                print("Using fallback default mode network")
+                debug_log("Creating fallback DMN...")
                 
                 # Select a subset of heads from the model for the fallback DMN
                 # For Mistral, focus on later layers which tend to have more semantic understanding
                 fallback_size = self.num_heads * 16  # Use 16 heads per layer as fallback
+                debug_log(f"Creating a fallback DMN with target size of {fallback_size} heads")
                 
                 top_heads = []
                 # Add heads from later layers (second half of the model)
@@ -399,6 +482,7 @@ class DefaultModeNetworkExperiment:
                         # Limit the total number of heads for performance
                         if len(top_heads) >= fallback_size:
                             break
+                debug_log(f"Created initial fallback DMN with {len(top_heads)} heads")
                             
                 # Convert numpy types to native Python types to satisfy mypy
                 python_top_heads = [
@@ -407,31 +491,38 @@ class DefaultModeNetworkExperiment:
                 ]
                 self.dmn_identifier.top_default_mode_heads = python_top_heads
                 try:
+                    debug_log("Attempting to initialize generator with fallback DMN...")
                     self._initialize_generator()
                 except Exception as e:
-                    print(f"Error initializing generator with fallback DMN: {e}")
+                    debug_log(f"Error initializing generator with fallback DMN: {e}", is_important=True)
                     # Create an even simpler fallback as last resort
+                    debug_log("Creating simplified fallback DMN as last resort...")
                     simple_heads = [(self.num_layers-1, i, 0.8) for i in range(min(16, self.num_heads))]
+                    debug_log(f"Simple fallback DMN has {len(simple_heads)} heads from layer {self.num_layers-1}")
                     self.dmn_identifier.top_default_mode_heads = simple_heads
                     self._initialize_generator()
                 print(f"Created fallback DMN with {len(self.dmn_identifier.top_default_mode_heads)} heads")
 
         # Step 5: Generate responses
+        debug_log("STEP 5: Generating responses", divider=True)
         print(
             f"Generating responses for {len(queries)} queries with {len(inhibition_factors)} inhibition factors"
         )
 
-        for query in queries:
+        for q_idx, query in enumerate(queries):
             query_results = []
+            debug_log(f"Processing query {q_idx+1}/{len(queries)}: '{query}'")
             print(f"\nProcessing query: {query}")
 
             for factor in inhibition_factors:
                 try:
+                    debug_log(f"  Generating with inhibition factor: {factor:.2f}")
                     print(f"  Generating with inhibition factor: {factor:.2f}")
                     response = None
 
                     if factor == 0.0:
                         # Normal generation without inhibition
+                        debug_log("  Normal generation without inhibition")
                         inputs = self.tokenizer(query, return_tensors="pt").to(self.device)
                         output = self.model.generate(
                             **inputs,
@@ -443,14 +534,17 @@ class DefaultModeNetworkExperiment:
                         response = self.tokenizer.decode(output[0], skip_special_tokens=True)
                     else:
                         # Generation with inhibition
+                        debug_log(f"  Generation with inhibition factor {factor}")
                         try:
                             normal_response, inhibited_response = self.generate_with_inhibition(
                                 query, inhibition_factor=factor, max_new_tokens=max_new_tokens
                             )
                             response = inhibited_response
                         except Exception as e:
+                            debug_log(f"  Error with inhibited generation: {e}", is_important=True)
                             print(f"Error with inhibited generation: {e}")
                             print("Falling back to normal generation")
+                            debug_log("  Falling back to normal generation")
                             # Fall back to normal generation
                             inputs = self.tokenizer(query, return_tensors="pt").to(self.device)
                             output = self.model.generate(
@@ -467,17 +561,21 @@ class DefaultModeNetworkExperiment:
                         result = {"query": query, "inhibition_factor": factor, "response": response}
                         query_results.append(result)
                         at_least_one_succeeded = True
+                        debug_log(f"  Generation successful (length: {len(response)})")
                         print(f"  Generation successful (length: {len(response)})")
                     else:
+                        debug_log("  Generation failed - empty response", is_important=True)
                         print("  Generation failed - empty response")
 
                 except Exception as e:
+                    debug_log(f"  Error generating response for factor {factor}: {e}", is_important=True)
                     print(f"  Error generating response for factor {factor}: {e}")
 
             results.extend(query_results)
 
             # Save intermediate results after each query
             if query_results:
+                debug_log(f"Saving intermediate results after query {q_idx+1}")
                 save_query_outputs(
                     results,
                     model_name=self.model_name,
@@ -486,15 +584,20 @@ class DefaultModeNetworkExperiment:
                 )
 
         # Step 6: Save outputs
+        debug_log("STEP 6: Saving final outputs", divider=True)
         try:
             print("\nSaving outputs...")
             save_query_outputs(results, model_name=self.model_name, output_dir=output_dir)
+            debug_log(f"Saved {len(results)} results to {output_dir}")
         except Exception as e:
+            debug_log(f"Error saving outputs: {e}", is_important=True)
             print(f"Error saving outputs: {e}")
 
         if not at_least_one_succeeded:
+            debug_log("Warning: No successful generations were produced during this experiment.", is_important=True)
             print("Warning: No successful generations were produced during this experiment.")
 
+        debug_log("Experiment complete", is_important=True, divider=True)
         print("Experiment complete")
         return results
 

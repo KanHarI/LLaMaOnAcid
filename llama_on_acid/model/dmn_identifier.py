@@ -17,6 +17,20 @@ ActivationDict = Dict[int, Dict[int, List[float]]]
 HeadImportanceScore = List[Tuple[int, int, float]]
 
 
+# Add debug logging function for consistency across modules
+def debug_log(msg: str, is_important: bool = False, divider: bool = False) -> None:
+    """Helper function to print consistent debug logs with timestamps."""
+    timestamp = datetime.now().strftime("%H:%M:%S.%f")[:-3]
+    if divider:
+        print(f"\n{'=' * 80}")
+    if is_important:
+        print(f"\n[DMN {timestamp}] 🔍 {msg} 🔍")
+    else:
+        print(f"[DMN {timestamp}] {msg}")
+    if divider:
+        print(f"{'=' * 80}\n")
+
+
 class DefaultModeNetworkIdentifier:
     """
     Class to identify the default mode network (DMN) in language models
@@ -39,6 +53,9 @@ class DefaultModeNetworkIdentifier:
             cache_dir: Directory to store cached data
             model_name: Name of the model (used for cache folder)
         """
+        debug_log("Initializing DefaultModeNetworkIdentifier", is_important=True, divider=True)
+        debug_log(f"Model: {model_name}, Device: {device}")
+        
         self.model = model
         self.device = device
         self.model_name = model_name
@@ -46,26 +63,38 @@ class DefaultModeNetworkIdentifier:
         # Create cache directory
         self.cache_dir = os.path.join(cache_dir or CACHE_DIR, model_name.replace("/", "_"))
         os.makedirs(self.cache_dir, exist_ok=True)
+        debug_log(f"Using cache directory: {self.cache_dir}")
 
         # Model dimensions
+        debug_log("Determining model dimensions...")
         if hasattr(model.config, "num_hidden_layers"):
             self.num_layers = model.config.num_hidden_layers
+            debug_log(f"Found num_hidden_layers: {self.num_layers}")
         elif hasattr(model.config, "n_layer"):
             self.num_layers = model.config.n_layer
+            debug_log(f"Found n_layer: {self.num_layers}")
         else:
-            raise ValueError("Could not determine number of layers in the model")
+            error_msg = "Could not determine number of layers in the model"
+            debug_log(error_msg, is_important=True)
+            raise ValueError(error_msg)
 
         if hasattr(model.config, "num_attention_heads"):
             self.num_heads = model.config.num_attention_heads
+            debug_log(f"Found num_attention_heads: {self.num_heads}")
         elif hasattr(model.config, "n_head"):
             self.num_heads = model.config.n_head
+            debug_log(f"Found n_head: {self.num_heads}")
         else:
-            raise ValueError("Could not determine number of attention heads in the model")
+            error_msg = "Could not determine number of attention heads in the model"
+            debug_log(error_msg, is_important=True)
+            raise ValueError(error_msg)
 
         # Storage for attention patterns
         self.default_mode_activations: ActivationDict = {}
         self.head_importance_scores: HeadImportanceScore = []
         self.top_default_mode_heads: HeadImportanceScore = []
+        
+        debug_log(f"DMN identifier initialized for model with {self.num_layers} layers and {self.num_heads} heads per layer")
 
     def register_attention_hooks(self) -> List[torch.utils.hooks.RemovableHandle]:
         """
@@ -74,6 +103,7 @@ class DefaultModeNetworkIdentifier:
         Returns:
             List of hook handles
         """
+        debug_log("Registering attention hooks...", is_important=True)
         hooks = []
 
         def get_attention_hook(layer_idx: int, head_idx: int) -> Callable[[Any, Any, Any], None]:
@@ -124,29 +154,61 @@ class DefaultModeNetworkIdentifier:
                 # If we don't recognize the attention format, log it
                 else:
                     if not hasattr(self, "_warned_about_format"):
-                        print(f"Warning: Unrecognized attention format for layer {layer_idx}. Output type: {type(output)}")
+                        debug_log(f"Unrecognized attention format for layer {layer_idx}", is_important=True)
+                        debug_log(f"Output type: {type(output)}")
                         if isinstance(output, tuple):
-                            print(f"Output tuple length: {len(output)}")
+                            debug_log(f"Output tuple length: {len(output)}")
+                            # Print more details about the tuple elements
+                            for i, elem in enumerate(output):
+                                debug_log(f"Element {i} type: {type(elem)}, shape: {getattr(elem, 'shape', 'No shape')}")
                         self._warned_about_format = True
 
             return hook
 
         # Register hooks for each attention layer and head
-        print("Registering attention hooks...")
+        debug_log(f"Registering hooks for {self.num_layers} layers with {self.num_heads} heads each")
+        registered_count = 0
+        error_count = 0
+        
         for layer_idx in range(self.num_layers):
-            for head_idx in range(self.num_heads):
+            try:
                 # Access the correct attention module based on the model architecture
-                if hasattr(self.model, "model"):
-                    # For LLaMA models
+                if hasattr(self.model, "model") and hasattr(self.model.model, "layers"):
+                    # For LLaMA/Mistral models
                     attn_module = self.model.model.layers[layer_idx].self_attn
-                else:
-                    # For other architectures
+                    debug_log(f"Layer {layer_idx}: Found LLaMA/Mistral style attention module")
+                elif hasattr(self.model, "h"):
+                    # For other architectures like GPT-2
                     attn_module = self.model.h[layer_idx].attn
+                    debug_log(f"Layer {layer_idx}: Found GPT-2 style attention module")
+                else:
+                    debug_log(f"Layer {layer_idx}: Could not find attention module", is_important=True)
+                    error_count += 1
+                    continue
 
-                # Register the hook
-                hook = attn_module.register_forward_hook(get_attention_hook(layer_idx, head_idx))
-                hooks.append(hook)
+                # Log the attention module type and properties
+                debug_log(f"Layer {layer_idx} attention module: {type(attn_module).__name__}")
+                
+                # Check for flash attention
+                has_flash = hasattr(attn_module, "flash_attn") and attn_module.flash_attn
+                if has_flash:
+                    debug_log(f"Layer {layer_idx} uses flash attention")
+                
+                # Register hooks for each head in this layer
+                for head_idx in range(self.num_heads):
+                    try:
+                        hook = attn_module.register_forward_hook(get_attention_hook(layer_idx, head_idx))
+                        hooks.append(hook)
+                        registered_count += 1
+                    except Exception as e:
+                        debug_log(f"Error registering hook for layer {layer_idx}, head {head_idx}: {e}", is_important=True)
+                        error_count += 1
+            
+            except Exception as e:
+                debug_log(f"Error accessing attention module for layer {layer_idx}: {e}", is_important=True)
+                error_count += 1
 
+        debug_log(f"Registered {registered_count} hooks successfully with {error_count} errors")
         return hooks
 
     def identify_default_mode_network(
@@ -161,7 +223,8 @@ class DefaultModeNetworkIdentifier:
             sample_size: Number of chunks to process
             use_cache: Whether to use cached activations if available
         """
-        print("Identifying default mode network from text chunks...")
+        debug_log("Starting DMN identification from text chunks...", is_important=True, divider=True)
+        debug_log(f"Parameters: sample_size={sample_size}, use_cache={use_cache}")
 
         # Check if we have previously processed activations in cache
         activations_cache_file = os.path.join(
@@ -170,41 +233,68 @@ class DefaultModeNetworkIdentifier:
 
         if use_cache and os.path.exists(activations_cache_file):
             try:
+                debug_log(f"Found cached DMN activations at: {activations_cache_file}")
                 print(f"Loading cached DMN activations from {activations_cache_file}")
+                
                 with open(activations_cache_file, "rb") as f:
                     cached_data = pickle.load(f)
 
                 if "default_mode_activations" in cached_data:
                     self.default_mode_activations = cached_data["default_mode_activations"]
-                    print(
-                        f"Loaded cached activations for {len(self.default_mode_activations)} layers"
-                    )
+                    debug_log(f"Loaded activations for {len(self.default_mode_activations)} layers")
+                    
+                    # Log the structure of loaded activations
+                    layer_counts = {layer: len(heads) for layer, heads in self.default_mode_activations.items()}
+                    debug_log(f"Activation structure: {layer_counts}")
 
                     # Calculate importance scores from the loaded activations
                     self._calculate_head_importance_scores()
-                    print("Calculated head importance scores from cached activations")
+                    debug_log("Calculated head importance scores from cached activations")
                     return
+                else:
+                    debug_log("Cached file doesn't contain 'default_mode_activations'", is_important=True)
 
             except Exception as e:
-                print(f"Error loading cached activations: {e}")
+                debug_log(f"Error loading cached activations: {e}", is_important=True)
 
         # Register hooks to capture attention activations
         hooks = self.register_attention_hooks()
+        debug_log(f"Registered {len(hooks)} hooks to capture attention patterns")
 
         # Process chunks
         chunks_to_process = chunks[:sample_size]
+        debug_log(f"Processing {len(chunks_to_process)} chunks to identify DMN")
         print(f"Processing {len(chunks_to_process)} chunks to identify default mode network")
-        for chunk in tqdm(chunks_to_process):
+        
+        # Track success/error rate
+        success_count = 0
+        error_count = 0
+        
+        for idx, chunk in enumerate(tqdm(chunks_to_process)):
             # Tokenize the chunk
-            inputs = tokenizer(chunk, return_tensors="pt").to(self.device)
+            try:
+                inputs = tokenizer(chunk, return_tensors="pt").to(self.device)
+                
+                # Log token count
+                token_count = inputs.input_ids.shape[1]
+                if idx == 0:
+                    debug_log(f"Processing chunk {idx+1}/{len(chunks_to_process)}: {token_count} tokens")
+                
+                # Process through model with no_grad to save memory
+                with torch.no_grad():
+                    self.model(**inputs)
+                    
+                success_count += 1
+            except Exception as e:
+                debug_log(f"Error processing chunk {idx}: {e}", is_important=True)
+                error_count += 1
 
-            # Process through model with no_grad to save memory
-            with torch.no_grad():
-                self.model(**inputs)
+        debug_log(f"Processed {success_count} chunks successfully with {error_count} errors")
 
         # Remove hooks
         for hook in hooks:
             hook.remove()
+        debug_log("Removed all hooks")
 
         # Calculate average activations and importance scores for each head
         self._calculate_head_importance_scores()
@@ -212,6 +302,7 @@ class DefaultModeNetworkIdentifier:
         # Cache the activations if we have any
         if self.default_mode_activations:
             try:
+                debug_log(f"Caching DMN activations to {activations_cache_file}")
                 cache_data = {
                     "timestamp": datetime.now().isoformat(),
                     "model_name": self.model_name,
@@ -221,16 +312,26 @@ class DefaultModeNetworkIdentifier:
                 }
                 with open(activations_cache_file, "wb") as f:
                     pickle.dump(cache_data, f)
-                print(f"Cached DMN activations for {len(self.default_mode_activations)} layers")
+                debug_log(f"Cached DMN activations for {len(self.default_mode_activations)} layers")
             except Exception as e:
-                print(f"Error caching DMN activations: {e}")
+                debug_log(f"Error caching DMN activations: {e}", is_important=True)
 
-        print("Default mode network identification complete")
+        debug_log("Default mode network identification complete", is_important=True)
 
     def _calculate_head_importance_scores(self) -> None:
         """
         Calculate head importance scores based on the captured activations.
         """
+        debug_log("Calculating head importance scores...")
+        
+        if not self.default_mode_activations:
+            debug_log("No activations recorded! Cannot calculate head importance.", is_important=True)
+            return
+            
+        # Log the structure of recorded activations
+        layer_counts = {layer: len(heads) for layer, heads in self.default_mode_activations.items()}
+        debug_log(f"Recorded activations for {len(self.default_mode_activations)} layers: {layer_counts}")
+        
         avg_activations: Dict[int, Dict[int, float]] = {}
         for layer_idx in self.default_mode_activations:
             avg_activations[layer_idx] = {}
@@ -248,6 +349,19 @@ class DefaultModeNetworkIdentifier:
         head_scores.sort(key=lambda x: x[2], reverse=True)
 
         self.head_importance_scores = head_scores
+        debug_log(f"Calculated importance scores for {len(head_scores)} heads")
+        
+        # Log some stats about the scores
+        if head_scores:
+            top_5_scores = head_scores[:5]
+            bottom_5_scores = head_scores[-5:]
+            debug_log(f"Top 5 head scores: {top_5_scores}")
+            debug_log(f"Bottom 5 head scores: {bottom_5_scores}")
+            
+            min_score = min(score for _, _, score in head_scores)
+            max_score = max(score for _, _, score in head_scores)
+            avg_score = sum(score for _, _, score in head_scores) / len(head_scores)
+            debug_log(f"Score stats - Min: {min_score:.4f}, Max: {max_score:.4f}, Avg: {avg_score:.4f}")
 
     def select_top_default_mode_heads(self, top_n: int = 50) -> List[Tuple[int, int, float]]:
         """
@@ -259,18 +373,30 @@ class DefaultModeNetworkIdentifier:
         Returns:
             List of (layer_idx, head_idx, score) tuples
         """
+        debug_log(f"Selecting top {top_n} default mode heads...", is_important=True)
+        
         if not self.head_importance_scores:
-            raise ValueError("Must run identify_default_mode_network() first")
+            error_msg = "Must run identify_default_mode_network() first"
+            debug_log(error_msg, is_important=True)
+            raise ValueError(error_msg)
 
         self.top_default_mode_heads = self.head_importance_scores[:top_n]
 
-        print(f"Selected top {top_n} heads as the default mode network:")
+        debug_log(f"Selected top {top_n} heads as the default mode network:")
         for layer_idx, head_idx, score in self.top_default_mode_heads[:10]:
-            print(f"  Layer {layer_idx}, Head {head_idx}: Activation {score:.4f}")
+            debug_log(f"  Layer {layer_idx}, Head {head_idx}: Activation {score:.4f}")
 
         if top_n > 10:
-            print(f"  ... plus {top_n-10} more heads")
+            debug_log(f"  ... plus {top_n-10} more heads")
 
+        # Analyze layer distribution
+        layer_counts = {}
+        for layer_idx, _, _ in self.top_default_mode_heads:
+            layer_counts[layer_idx] = layer_counts.get(layer_idx, 0) + 1
+        
+        layer_dist = sorted(layer_counts.items())
+        debug_log(f"Layer distribution in top DMN heads: {layer_dist}")
+        
         return self.top_default_mode_heads
 
     def save_default_mode_network(self, filepath: str) -> None:
