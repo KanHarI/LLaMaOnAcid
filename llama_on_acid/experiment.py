@@ -103,8 +103,12 @@ class DefaultModeNetworkExperiment:
         self.articles: List[str] = []
         self.processed_chunks: List[str] = []
 
-        # Initialize DMN identifier
-        self.dmn_identifier = DefaultModeNetworkIdentifier(self.model_name, device=self.device)
+        # Debug prints to help identify the issue
+        print(f"model_name type: {type(self.model_name)}")
+        print(f"model type: {type(self.model)}")
+
+        # Initialize DMN identifier - FIX: Pass the model object, not the model name string
+        self.dmn_identifier = DefaultModeNetworkIdentifier(self.model, device=self.device, model_name=self.model_name)
 
         # Initialize generator with proper type annotation
         self.generator: Optional[InhibitedGenerator] = None
