@@ -5,9 +5,12 @@ Module for generating text with inhibition of the default mode network.
 from typing import Any, Callable, Dict, List, Optional, Tuple, cast
 
 import torch
+from torch.utils.hooks import RemovableHandle
 from transformers import PreTrainedModel, PreTrainedTokenizer
 
 from ..model.dmn_identifier import HeadImportanceScore
+from ..config import DEFAULT_GENERATION_PARAMS, DMN_CONFIG
+from ..types import GenerationResult
 
 # Add debug logging function for consistency across modules
 from datetime import datetime
@@ -427,3 +430,123 @@ class InhibitedGenerator:
         generated_text = self.tokenizer.decode(outputs[0], skip_special_tokens=True)
         debug_log(f"Output decoded, length: {len(generated_text)} characters")
         return cast(str, generated_text)
+
+    def register_hooks(self) -> List[RemovableHandle]:
+        """
+        Register hooks to inhibit the default mode network during generation.
+        
+        Returns:
+            List of hook handles that can be removed later
+        """
+        # Configure logging verbosity
+        verbose = DMN_CONFIG["verbose_logging"]
+        
+        debug_log("Registering hooks for DMN heads...", is_important=True)
+        hook_handles = []
+        
+        try:
+            # Get the model architecture for debugging
+            model_arch = "unknown"
+            if hasattr(self.model, "config"):
+                if hasattr(self.model.config, "model_type"):
+                    model_arch = self.model.config.model_type
+                elif hasattr(self.model.config, "architectures") and self.model.config.architectures:
+                    model_arch = self.model.config.architectures[0]
+            
+            debug_log(f"Model architecture: {model_arch}", verbose=verbose)
+            
+            # Convert the model to eval mode for safety
+            self.model.eval()
+            
+            # Track errors for reporting at the end
+            errors = 0
+            flash_attention_layers = 0
+            
+            debug_log(f"Model has {self.num_layers} layers and {self.num_heads} heads per layer", verbose=verbose)
+            
+            # Get a list of unique layers that have DMN heads
+            layers_with_dmn = sorted(set(layer_idx for layer_idx, _, _ in self.top_default_mode_heads))
+            debug_log(f"DMN heads present in {len(layers_with_dmn)} layers: {layers_with_dmn}", verbose=verbose)
+            
+            # Track which heads have hooks registered by layer and head index
+            self.registered_hooks = {}
+            
+            # Register hooks for each layer
+            for layer_idx in range(self.num_layers):
+                # Get all heads from this layer that are in the DMN
+                layer_heads = [(h_idx, score) for l_idx, h_idx, score in self.top_default_mode_heads if l_idx == layer_idx]
+                
+                if not layer_heads:
+                    debug_log(f"Layer {layer_idx}: No DMN heads to inhibit", verbose=verbose)
+                    continue
+                
+                debug_log(f"Layer {layer_idx}: Registering hooks for {len(layer_heads)} heads: {[h for h, _ in layer_heads]}", verbose=verbose)
+
+                # Register hooks for each head in the layer
+                for head_idx, _ in layer_heads:
+                    debug_log(f"Layer {layer_idx}, head {head_idx}: Registering hook", verbose=verbose)
+                    hook_handle = self.model.model.layers[layer_idx].self_attn.register_forward_hook(
+                        lambda module, input, output: self._apply_inhibition(layer_idx, head_idx, input, output)
+                    )
+                    hook_handles.append(hook_handle)
+                    self.registered_hooks[(layer_idx, head_idx)] = hook_handle
+
+            debug_log("All hooks registered successfully")
+            return hook_handles
+
+        except Exception as e:
+            debug_log(f"Error registering hooks: {e}", is_important=True)
+            # Remove all registered hooks
+            for hook_handle in hook_handles:
+                hook_handle.remove()
+            raise
+
+    def _apply_inhibition(self, layer_idx: int, head_idx: int, input: Any, output: Any) -> None:
+        """
+        Apply inhibition to the attention output for a specific layer and head.
+
+        Args:
+            layer_idx: Index of the layer
+            head_idx: Index of the head
+            input: Input to the attention module
+            output: Output from the attention module
+        """
+        # Configure logging verbosity
+        verbose = DMN_CONFIG["verbose_logging"]
+        
+        debug_log(f"Applying inhibition to layer {layer_idx}, head {head_idx}", verbose=verbose)
+        
+        # Check if the layer and head are in the registered_hooks dictionary
+        if (layer_idx, head_idx) in self.registered_hooks:
+            debug_log(f"Layer {layer_idx}, head {head_idx}: Hook found", verbose=verbose)
+            
+            # Get the inhibition factor for this layer and head
+            inhibition_factor = self.attention_masks[layer_idx][head_idx]
+            debug_log(f"Layer {layer_idx}, head {head_idx}: Inhibition factor: {inhibition_factor}", verbose=verbose)
+            
+            # Apply inhibition to the output
+            if isinstance(output, tuple) and len(output) > 3:
+                # For models with attention weights at index 3
+                attn_weights = output[3]
+                debug_log(f"Layer {layer_idx}, head {head_idx}: Attention weights shape: {attn_weights.shape}", verbose=verbose)
+                
+                # Create a scaling tensor that's 1 except for the target head
+                scaling = torch.ones_like(attn_weights)
+                scaling[:, :, head_idx, :] = inhibition_factor
+                debug_log(f"Layer {layer_idx}, head {head_idx}: Scaling tensor shape: {scaling.shape}", verbose=verbose)
+                
+                # Apply scaling
+                new_weights = attn_weights * scaling
+                debug_log(f"Layer {layer_idx}, head {head_idx}: New weights shape: {new_weights.shape}", verbose=verbose)
+                
+                # Update the output tuple
+                output_list = list(output)
+                output_list[3] = new_weights
+                output_list = tuple(output_list)
+                debug_log(f"Layer {layer_idx}, head {head_idx}: Updated output shape: {output_list[3].shape}", verbose=verbose)
+                
+                output[3] = output_list[3]
+            else:
+                debug_log(f"Layer {layer_idx}, head {head_idx}: Unsupported output format", is_important=True)
+        else:
+            debug_log(f"Layer {layer_idx}, head {head_idx}: Hook not found", is_important=True)

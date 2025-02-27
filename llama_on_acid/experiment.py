@@ -7,7 +7,7 @@ import json
 import os
 import pickle
 from datetime import datetime
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 import numpy as np
 import pandas as pd
@@ -24,6 +24,8 @@ from .config import (
     DEFAULT_QUERIES,
     DEFAULT_SAMPLE_SIZE,
     DEFAULT_TOP_HEADS,
+    DEVICE,
+    DMN_CONFIG,
 )
 from .data.processor import prepare_text_chunks
 from .data.wikipedia import fetch_top_wikipedia_articles
@@ -243,7 +245,7 @@ class DefaultModeNetworkExperiment:
         debug_log("DMN identification complete", divider=True)
 
     def select_top_default_mode_heads(
-        self, top_n_per_layer: int = 5
+        self, top_n_per_layer: int = None
     ) -> List[Tuple[int, int, float]]:
         """
         Select the top N most active heads from each layer (excluding first and last).
@@ -254,7 +256,13 @@ class DefaultModeNetworkExperiment:
         Returns:
             List of (layer_idx, head_idx, score) tuples
         """
-        debug_log(f"Selecting top {top_n_per_layer} default mode heads per layer", is_important=True)
+        # Use configuration value if not provided
+        if top_n_per_layer is None:
+            top_n_per_layer = DMN_CONFIG["top_n_per_layer"]
+            
+        verbose = DMN_CONFIG["verbose_logging"]
+        debug_log(f"Selecting top {top_n_per_layer} default mode heads per layer", 
+                is_important=True, verbose=verbose)
         
         if not hasattr(self, "dmn_identifier") or not self.dmn_identifier:
             raise ValueError("Must run identify_default_mode_network() first")
@@ -394,7 +402,7 @@ class DefaultModeNetworkExperiment:
         force_article_refresh: bool = False,
         output_dir: str = "results",
         save_intermediate: bool = False,
-        top_n_per_layer: int = 5,
+        top_n_per_layer: Optional[int] = None,
     ) -> List[Dict[str, Any]]:
         """
         Run a complete experiment with multiple queries and inhibition factors.
@@ -404,19 +412,17 @@ class DefaultModeNetworkExperiment:
             inhibition_factors: List of inhibition factors to try
             max_new_tokens: Maximum number of tokens to generate
             n_chunks: Number of chunks to process for DMN identification
-            dmn_file: Path to pre-identified DMN file (if available)
+            dmn_file: Path to a pre-identified DMN file
             use_cache: Whether to use cached data
-            force_article_refresh: Whether to force refresh of article data
+            force_article_refresh: Whether to force refresh of Wikipedia articles
             output_dir: Directory to save outputs
             save_intermediate: Whether to save intermediate results
-            top_n_per_layer: Number of top heads to select per layer
+            top_n_per_layer: Number of top heads to select per layer (None to use config default)
 
         Returns:
             List of result dictionaries
         """
-        debug_log("Starting full experiment", is_important=True, divider=True)
-        
-        # Create output directory
+        debug_log("Starting experiment run", is_important=True, divider=True)
         os.makedirs(output_dir, exist_ok=True)
         
         # Make sure we have a model and tokenizer
