@@ -38,7 +38,7 @@ DEFAULT_INHIBITION_FACTORS = [0.0, 0.3, 0.5, 0.7, 0.9, 1.0]
 # DMN identification settings
 DMN_CONFIG = {
     # Number of heads to select per layer when identifying default mode network
-    "top_n_per_layer": 10,
+    "top_n_per_layer": 20,
     # Skip first and last layers when identifying DMN (they often serve different functions)
     "skip_first_last": True,
     # Verbosity of logging during DMN identification and hook registration
