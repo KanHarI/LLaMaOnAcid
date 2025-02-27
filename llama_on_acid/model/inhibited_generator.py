@@ -198,41 +198,28 @@ class InhibitedGenerator:
         ) -> Callable[[Any, Any, Any], Optional[Tuple[Any, ...]]]:
             def hook(module: Any, input: Any, output: Any) -> Optional[Tuple[Any, ...]]:
                 # Different models have different output formats for attention
-                # For Mistral/Llama3 models (using attention with flash attention impl)
-                if hasattr(module, "flash_attn") and module.flash_attn:
-                    # Flash attention doesn't return attention weights by default
-                    # We'll need to modify the hidden states directly instead
-                    # This is a simplified approach for these models
-                    if isinstance(output, tuple) and len(output) >= 1:
-                        # Just scale the output hidden states
-                        hidden_states = output[0]
-                        scaling = torch.ones_like(hidden_states[0, 0, 0]).to(hidden_states.device)
-
-                        # Apply scaling - this is approximate since we don't have direct
-                        # access to attention weights with flash attention
-                        for head_idx, scale_factor in head_masks.items():
-                            # The rest of the heads remain at 1.0 (unchanged)
-                            # Scale based on all heads
-                            head_dim = hidden_states.shape[-1] // self.num_heads
-                            start_idx = head_idx * head_dim
-                            end_idx = (head_idx + 1) * head_dim
-
-                            # Create head-specific scaling
-                            scaling_factor = torch.ones_like(hidden_states)
-                            scaling_factor[:, :, start_idx:end_idx] *= scale_factor
-
-                            # Apply scaling
-                            output_list = list(output)
-                            output_list[0] = hidden_states * scaling_factor
-                            return tuple(output_list)
-
-                        # If no modifications were made, return the original output
-                        return output
-                    # Return original output if output format doesn't match expectations
-                    return output
-
+                # For Mistral models (using attention with different output format)
+                if isinstance(output, tuple) and len(output) == 2:
+                    # This is the Mistral format (output is a tuple with hidden states and attention weights)
+                    # First element is typically the hidden states, second might contain attention info
+                    hidden_states = output[0]
+                    
+                    # Apply scaling to hidden states directly for Mistral
+                    # This is an approximation since we're not directly modifying the attention weights
+                    scaling_factor = torch.ones_like(hidden_states)
+                    head_dim = hidden_states.shape[-1] // self.num_heads
+                    
+                    for head_idx, scale in head_masks.items():
+                        start_idx = head_idx * head_dim
+                        end_idx = (head_idx + 1) * head_dim
+                        scaling_factor[:, :, start_idx:end_idx] *= scale
+                    
+                    # Create a new output with modified hidden states
+                    output_list = list(output)
+                    output_list[0] = hidden_states * scaling_factor
+                    return tuple(output_list)
+                
                 # For LLaMA models, attention outputs contain attention probs at index 3
-                # This handles the case where attention weights are returned
                 elif isinstance(output, tuple) and len(output) > 3:
                     # Get attention weights
                     attn_weights = output[3]

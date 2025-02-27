@@ -78,8 +78,31 @@ class DefaultModeNetworkIdentifier:
 
         def get_attention_hook(layer_idx: int, head_idx: int) -> Callable[[Any, Any, Any], None]:
             def hook(module: Any, input: Any, output: Any) -> None:
+                # For Mistral models, attention outputs contain 2 elements
+                if isinstance(output, tuple) and len(output) == 2:
+                    # For Mistral models, we don't have direct access to attention weights
+                    # We'll use a proxy based on the hidden states
+                    hidden_states = output[0]  # First element is hidden states
+                    
+                    # Extract a proxy for attention based on the activation of this head
+                    head_dim = hidden_states.shape[-1] // self.num_heads
+                    start_idx = head_idx * head_dim
+                    end_idx = (head_idx + 1) * head_dim
+                    
+                    # Use the mean activation of this head's hidden states as a proxy
+                    head_activation = hidden_states[:, :, start_idx:end_idx].abs().mean().item()
+                    
+                    # Store the activation
+                    if layer_idx not in self.default_mode_activations:
+                        self.default_mode_activations[layer_idx] = {}
+
+                    if head_idx not in self.default_mode_activations[layer_idx]:
+                        self.default_mode_activations[layer_idx][head_idx] = []
+
+                    self.default_mode_activations[layer_idx][head_idx].append(head_activation)
+                    
                 # For LLaMA models, attention outputs contain attention probs at index 3
-                if isinstance(output, tuple) and len(output) > 3:
+                elif isinstance(output, tuple) and len(output) > 3:
                     # Get attention weights
                     attn_weights = output[3]
 
@@ -97,6 +120,14 @@ class DefaultModeNetworkIdentifier:
                         self.default_mode_activations[layer_idx][head_idx] = []
 
                     self.default_mode_activations[layer_idx][head_idx].append(activation)
+                
+                # If we don't recognize the attention format, log it
+                else:
+                    if not hasattr(self, "_warned_about_format"):
+                        print(f"Warning: Unrecognized attention format for layer {layer_idx}. Output type: {type(output)}")
+                        if isinstance(output, tuple):
+                            print(f"Output tuple length: {len(output)}")
+                        self._warned_about_format = True
 
             return hook
 

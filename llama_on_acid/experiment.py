@@ -381,20 +381,40 @@ class DefaultModeNetworkExperiment:
                 print(f"Error identifying default mode network: {e}")
                 print("Using fallback default mode network")
                 # Create a fallback DMN
-                top_heads = [
-                    (layer_idx, head_idx, 0.5)
-                    for layer_idx in range(self.model.config.num_hidden_layers)
-                    for head_idx in range(self.model.config.num_attention_heads)
-                    if layer_idx >= self.model.config.num_hidden_layers // 2
-                ]
+                # Use a more conservative approach with fewer heads for the fallback
+                print("Using fallback default mode network")
+                
+                # Select a subset of heads from the model for the fallback DMN
+                # For Mistral, focus on later layers which tend to have more semantic understanding
+                fallback_size = self.num_heads * 16  # Use 16 heads per layer as fallback
+                
+                top_heads = []
+                # Add heads from later layers (second half of the model)
+                for layer_idx in range(self.num_layers // 2, self.num_layers):
+                    for head_idx in range(self.num_heads):
+                        # Assign decreasing importance scores to create a gradient
+                        score = 1.0 - (head_idx / self.num_heads) * 0.5
+                        top_heads.append((layer_idx, head_idx, score))
+                        
+                        # Limit the total number of heads for performance
+                        if len(top_heads) >= fallback_size:
+                            break
+                            
                 # Convert numpy types to native Python types to satisfy mypy
                 python_top_heads = [
                     (int(layer_idx), int(head_idx), float(score))
                     for layer_idx, head_idx, score in top_heads
                 ]
                 self.dmn_identifier.top_default_mode_heads = python_top_heads
-                self._initialize_generator()
-                print(f"Created fallback DMN with {len(python_top_heads)} heads")
+                try:
+                    self._initialize_generator()
+                except Exception as e:
+                    print(f"Error initializing generator with fallback DMN: {e}")
+                    # Create an even simpler fallback as last resort
+                    simple_heads = [(self.num_layers-1, i, 0.8) for i in range(min(16, self.num_heads))]
+                    self.dmn_identifier.top_default_mode_heads = simple_heads
+                    self._initialize_generator()
+                print(f"Created fallback DMN with {len(self.dmn_identifier.top_default_mode_heads)} heads")
 
         # Step 5: Generate responses
         print(
