@@ -281,8 +281,6 @@ class InhibitedGenerator:
                     # First element is typically the hidden states, second might contain attention info
                     hidden_states = output[0]
                     
-                    debug_log(f"Mistral attention format detected for layer {layer_idx}, output shape: {hidden_states.shape}")
-                    
                     # Apply scaling to hidden states directly for Mistral
                     # This is an approximation since we're not directly modifying the attention weights
                     scaling_factor = torch.ones_like(hidden_states)
