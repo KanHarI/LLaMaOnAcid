@@ -77,6 +77,20 @@ def main() -> None:
         default=[0.0, 0.3, 0.5, 0.7, 0.9],
         help="Inhibition factors to use (default: 0.0, 0.3, 0.5, 0.7, 0.9)",
     )
+    
+    # DMN identification parameters
+    parser.add_argument(
+        "--top-heads-per-layer",
+        type=int,
+        default=5,
+        help="Number of top attention heads to select per layer for inhibition (default: 5)",
+    )
+    parser.add_argument(
+        "--skip-first-last",
+        action="store_true",
+        default=True,
+        help="Skip first and last layers when identifying DMN (default: True)",
+    )
 
     args = parser.parse_args()
 
@@ -102,6 +116,24 @@ def main() -> None:
     # Use specified queries or default queries
     queries = args.queries if args.queries else DEFAULT_QUERIES
     print(f"Using {len(queries)} queries and {len(args.factors)} inhibition factors")
+
+    # Identify or load the default mode network
+    if args.dmn_file and os.path.exists(args.dmn_file):
+        print(f"Loading pre-identified DMN from: {args.dmn_file}")
+        experiment.load_default_mode_network(args.dmn_file)
+    else:
+        print("Identifying default mode network...")
+        experiment.fetch_top_wikipedia_articles(n=50, force_refresh=args.force_refresh)
+        experiment.prepare_text_chunks(chunk_size=512)
+        experiment.identify_default_mode_network(
+            sample_size=args.n_chunks, use_cache=not args.no_cache
+        )
+        experiment.select_top_default_mode_heads(top_n_per_layer=args.top_heads_per_layer)
+
+        # Save the identified DMN for future use
+        dmn_path = os.path.join(output_dir, "dmn_heads.pkl")
+        print(f"Saving identified DMN to: {dmn_path}")
+        experiment.save_default_mode_network(dmn_path)
 
     # Run the experiment
     results = experiment.run_experiment(
@@ -140,14 +172,6 @@ def main() -> None:
         )
     except Exception as e:
         print(f"Error generating DMN visualization: {e}")
-
-    # Save the identified DMN for future use
-    try:
-        dmn_path = os.path.join(output_dir, "identified_dmn.pkl")
-        experiment.save_default_mode_network(dmn_path)
-        print(f"Saved identified DMN to {dmn_path}")
-    except Exception as e:
-        print(f"Error saving DMN: {e}")
 
     print("Experiment complete!")
 

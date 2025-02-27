@@ -231,21 +231,27 @@ class DefaultModeNetworkExperiment:
         debug_log("DMN identification complete", divider=True)
 
     def select_top_default_mode_heads(
-        self, top_n: int = DEFAULT_TOP_HEADS
+        self, top_n_per_layer: int = 5
     ) -> List[Tuple[int, int, float]]:
         """
-        Select the top N most active heads as the default mode network.
+        Select the top N most active heads from each layer (excluding first and last).
 
         Args:
-            top_n: Number of top heads to select
+            top_n_per_layer: Number of top heads to select from each layer
 
         Returns:
             List of (layer_idx, head_idx, score) tuples
         """
-        debug_log(f"SELECT_TOP_HEADS: Selecting top {top_n} default mode heads", is_important=True)
-        tops = self.dmn_identifier.select_top_default_mode_heads(top_n=top_n)
-        debug_log(f"Selected {len(tops)} top default mode heads")
-        return tops
+        debug_log(f"Selecting top {top_n_per_layer} default mode heads per layer", is_important=True)
+        
+        if not hasattr(self, "dmn_identifier") or not self.dmn_identifier:
+            raise ValueError("Must run identify_default_mode_network() first")
+        
+        self.top_default_mode_heads = self.dmn_identifier.select_top_default_mode_heads(
+            top_n_per_layer=top_n_per_layer
+        )
+        
+        return self.top_default_mode_heads
 
     def save_default_mode_network(self, filepath: str) -> None:
         """
@@ -376,132 +382,60 @@ class DefaultModeNetworkExperiment:
         force_article_refresh: bool = False,
         output_dir: str = "results",
         save_intermediate: bool = False,
+        top_n_per_layer: int = 5,
     ) -> List[Dict[str, Any]]:
         """
-        Run the full experiment, including DMN identification and inhibited generation.
+        Run a complete experiment with multiple queries and inhibition factors.
 
         Args:
-            queries: List of queries to test
-            inhibition_factors: List of inhibition factors to test
-            max_new_tokens: Maximum number of tokens to generate for each prompt
-            n_chunks: Number of text chunks to use for DMN identification
-            dmn_file: Path to pre-identified DMN file (optional)
-            use_cache: Whether to use cached data when available
-            force_article_refresh: Whether to force a refresh of article data
+            queries: List of prompts to use
+            inhibition_factors: List of inhibition factors to try
+            max_new_tokens: Maximum number of tokens to generate
+            n_chunks: Number of chunks to process for DMN identification
+            dmn_file: Path to pre-identified DMN file (if available)
+            use_cache: Whether to use cached data
+            force_article_refresh: Whether to force refresh of article data
             output_dir: Directory to save outputs
-            save_intermediate: Whether to save intermediate results after each query
+            save_intermediate: Whether to save intermediate results
+            top_n_per_layer: Number of top heads to select per layer
 
         Returns:
             List of result dictionaries
         """
-        debug_log(f"RUN_EXPERIMENT: Starting full experiment with {self.model_name}", is_important=True, divider=True)
-        debug_log(f"Parameters: max_tokens={max_new_tokens}, n_chunks={n_chunks}, use_cache={use_cache}")
+        debug_log("Starting full experiment", is_important=True, divider=True)
         
-        print(f"Running experiment with {self.model_name}")
-        results = []
-        at_least_one_succeeded = False
-
-        # Set default values
-        if queries is None:
-            queries = DEFAULT_QUERIES
-        debug_log(f"Using {len(queries)} queries")
-
-        if inhibition_factors is None:
-            inhibition_factors = DEFAULT_INHIBITION_FACTORS
-        debug_log(f"Using inhibition factors: {inhibition_factors}")
-
-        # Step 1: Fetch Wikipedia articles
-        try:
-            debug_log("STEP 1: Fetching Wikipedia articles", divider=True)
-            print("Fetching Wikipedia articles...")
-            self.fetch_top_wikipedia_articles(
-                use_cache=use_cache, force_refresh=force_article_refresh
-            )
-            print(f"Fetched {len(self.articles)} articles")
-        except Exception as e:
-            debug_log(f"Error fetching articles: {e}", is_important=True)
-            print(f"Error fetching articles: {e}")
-            print("Using fallback list of articles")
-            self.articles = ["Philosophy", "Science", "History", "Mathematics", "Literature"]
-            debug_log(f"Using {len(self.articles)} fallback articles")
-
-        # Step 2: Prepare text chunks
-        try:
-            debug_log("STEP 2: Preparing text chunks", divider=True)
-            print("Preparing text chunks...")
-            self.prepare_text_chunks(chunk_size=max_new_tokens, use_cache=use_cache)
-            print(f"Prepared {len(self.processed_chunks)} text chunks")
-        except Exception as e:
-            debug_log(f"Error preparing text chunks: {e}", is_important=True)
-            print(f"Error preparing text chunks: {e}")
-            self.processed_chunks = ["This is a fallback text chunk." * 50]
-            debug_log("Using fallback text chunks")
-
-        # Step 3 & 4: Load or identify default mode network
-        debug_log("STEP 3 & 4: Identifying default mode network", divider=True)
+        # Create output directory
+        os.makedirs(output_dir, exist_ok=True)
+        
+        # Make sure we have a model and tokenizer
+        if not hasattr(self, "model") or not hasattr(self, "tokenizer"):
+            debug_log("Loading model and tokenizer...")
+            self._load_model_and_tokenizer()
+            
+        # Identify or load the default mode network
         if dmn_file and os.path.exists(dmn_file):
-            debug_log(f"Loading pre-identified DMN from {dmn_file}")
-            print(f"Loading pre-identified DMN from {dmn_file}")
+            debug_log(f"Loading pre-identified DMN from: {dmn_file}")
             self.load_default_mode_network(dmn_file)
         else:
-            print("Identifying default mode network...")
-            try:
-                debug_log("No DMN file provided or found, identifying DMN...")
-                self.identify_default_mode_network(
-                    sample_size=min(n_chunks, len(self.processed_chunks)), use_cache=use_cache
-                )
-                debug_log("Selecting top default mode heads...")
-                self.select_top_default_mode_heads()
-                debug_log("Initializing generator with identified DMN heads...")
-                self._initialize_generator()
-            except Exception as e:
-                debug_log(f"Error identifying default mode network: {e}", is_important=True)
-                print(f"Error identifying default mode network: {e}")
-                print("Using fallback default mode network")
-                debug_log("Creating fallback DMN...")
-                
-                # Select a subset of heads from the model for the fallback DMN
-                # For Mistral, focus on later layers which tend to have more semantic understanding
-                fallback_size = self.num_heads * 16  # Use 16 heads per layer as fallback
-                debug_log(f"Creating a fallback DMN with target size of {fallback_size} heads")
-                
-                top_heads = []
-                # Add heads from later layers (second half of the model)
-                for layer_idx in range(self.num_layers // 2, self.num_layers):
-                    for head_idx in range(self.num_heads):
-                        # Assign decreasing importance scores to create a gradient
-                        score = 1.0 - (head_idx / self.num_heads) * 0.5
-                        top_heads.append((layer_idx, head_idx, score))
-                        
-                        # Limit the total number of heads for performance
-                        if len(top_heads) >= fallback_size:
-                            break
-                debug_log(f"Created initial fallback DMN with {len(top_heads)} heads")
-                            
-                # Convert numpy types to native Python types to satisfy mypy
-                python_top_heads = [
-                    (int(layer_idx), int(head_idx), float(score))
-                    for layer_idx, head_idx, score in top_heads
-                ]
-                self.dmn_identifier.top_default_mode_heads = python_top_heads
-                try:
-                    debug_log("Attempting to initialize generator with fallback DMN...")
-                    self._initialize_generator()
-                except Exception as e:
-                    debug_log(f"Error initializing generator with fallback DMN: {e}", is_important=True)
-                    # Create an even simpler fallback as last resort
-                    debug_log("Creating simplified fallback DMN as last resort...")
-                    simple_heads = [(self.num_layers-1, i, 0.8) for i in range(min(16, self.num_heads))]
-                    debug_log(f"Simple fallback DMN has {len(simple_heads)} heads from layer {self.num_layers-1}")
-                    self.dmn_identifier.top_default_mode_heads = simple_heads
-                    self._initialize_generator()
-                print(f"Created fallback DMN with {len(self.dmn_identifier.top_default_mode_heads)} heads")
+            debug_log("No DMN file provided or file not found, identifying default mode network...")
+            self.fetch_top_wikipedia_articles(n=50, use_cache=use_cache, force_refresh=force_article_refresh)
+            self.prepare_text_chunks(chunk_size=512, use_cache=use_cache)
+            self.identify_default_mode_network(sample_size=n_chunks, use_cache=use_cache)
+            self.select_top_default_mode_heads(top_n_per_layer=top_n_per_layer)
+            
+            # Save the identified DMN
+            dmn_save_path = os.path.join(output_dir, "identified_dmn.pkl")
+            debug_log(f"Saving identified DMN to: {dmn_save_path}")
+            self.save_default_mode_network(dmn_save_path)
 
         # Step 5: Generate responses
         debug_log("STEP 5: Generating responses", divider=True)
         print(
             f"Generating responses for {len(queries)} queries with {len(inhibition_factors)} inhibition factors"
         )
+
+        results = []
+        at_least_one_succeeded = False
 
         for q_idx, query in enumerate(queries):
             query_results = []

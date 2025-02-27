@@ -363,32 +363,57 @@ class DefaultModeNetworkIdentifier:
             avg_score = sum(score for _, _, score in head_scores) / len(head_scores)
             debug_log(f"Score stats - Min: {min_score:.4f}, Max: {max_score:.4f}, Avg: {avg_score:.4f}")
 
-    def select_top_default_mode_heads(self, top_n: int = 50) -> List[Tuple[int, int, float]]:
+    def select_top_default_mode_heads(self, top_n_per_layer: int = 5) -> List[Tuple[int, int, float]]:
         """
-        Select the top N most active heads as the default mode network.
+        Select the top N most active heads from each layer as the default mode network,
+        excluding the first and last layers.
 
         Args:
-            top_n: Number of top heads to select
+            top_n_per_layer: Number of top heads to select from each layer
 
         Returns:
             List of (layer_idx, head_idx, score) tuples
         """
-        debug_log(f"Selecting top {top_n} default mode heads...", is_important=True)
+        debug_log(f"Selecting top {top_n_per_layer} default mode heads per layer (excluding first and last layers)...", is_important=True)
         
         if not self.head_importance_scores:
             error_msg = "Must run identify_default_mode_network() first"
             debug_log(error_msg, is_important=True)
             raise ValueError(error_msg)
 
-        self.top_default_mode_heads = self.head_importance_scores[:top_n]
-
-        debug_log(f"Selected top {top_n} heads as the default mode network:")
-        for layer_idx, head_idx, score in self.top_default_mode_heads[:10]:
-            debug_log(f"  Layer {layer_idx}, Head {head_idx}: Activation {score:.4f}")
-
-        if top_n > 10:
-            debug_log(f"  ... plus {top_n-10} more heads")
-
+        # Group heads by layer
+        heads_by_layer = {}
+        for layer_idx, head_idx, score in self.head_importance_scores:
+            if layer_idx not in heads_by_layer:
+                heads_by_layer[layer_idx] = []
+            heads_by_layer[layer_idx].append((layer_idx, head_idx, score))
+        
+        # Sort heads within each layer by score (descending)
+        for layer_idx in heads_by_layer:
+            heads_by_layer[layer_idx].sort(key=lambda x: x[2], reverse=True)
+        
+        # Select top heads from each layer, excluding first and last layers
+        selected_heads = []
+        for layer_idx in range(1, self.num_layers - 1):  # Skip first and last layers
+            if layer_idx in heads_by_layer:
+                layer_heads = heads_by_layer[layer_idx][:top_n_per_layer]  # Take top N heads from this layer
+                selected_heads.extend(layer_heads)
+                debug_log(f"Layer {layer_idx}: Selected {len(layer_heads)} heads")
+        
+        self.top_default_mode_heads = selected_heads
+        
+        debug_log(f"Selected total of {len(selected_heads)} DMN heads across all layers")
+        
+        # Print sample of selected heads
+        debug_log("Sample of selected heads:")
+        for layer_idx in sorted(heads_by_layer.keys())[:5]:  # Show first 5 layers
+            if layer_idx == 0 or layer_idx == self.num_layers - 1:
+                debug_log(f"  Layer {layer_idx}: SKIPPED (first/last layer)")
+                continue
+            heads = heads_by_layer[layer_idx][:top_n_per_layer]
+            head_info = [(h[1], f"{h[2]:.4f}") for h in heads]
+            debug_log(f"  Layer {layer_idx}: {head_info}")
+        
         # Analyze layer distribution
         layer_counts = {}
         for layer_idx, _, _ in self.top_default_mode_heads:
@@ -448,7 +473,7 @@ class DefaultModeNetworkIdentifier:
                 # If we have importance scores but no top heads, select them now
                 if self.head_importance_scores:
                     print("Selecting top heads from importance scores...")
-                    self.select_top_default_mode_heads(top_n=30)
+                    self.select_top_default_mode_heads(top_n_per_layer=5)
 
             # Validate the loaded data
             if not self.top_default_mode_heads:
