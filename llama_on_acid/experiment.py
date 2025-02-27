@@ -36,8 +36,20 @@ from .visualization.visualizer import (
 )
 
 # Add debug logging function
-def debug_log(msg: str, is_important: bool = False, divider: bool = False) -> None:
-    """Helper function to print consistent debug logs with timestamps."""
+def debug_log(msg: str, is_important: bool = False, divider: bool = False, verbose: bool = False) -> None:
+    """
+    Helper function to print consistent debug logs with timestamps.
+    
+    Args:
+        msg: Message to log
+        is_important: Whether the message is important (will be highlighted)
+        divider: Whether to add divider lines before and after the message
+        verbose: Whether to print the message if it's not important (for detailed logs)
+    """
+    # Skip non-important, verbose logs unless verbose is enabled
+    if not is_important and not verbose:
+        return
+        
     timestamp = datetime.now().strftime("%H:%M:%S.%f")[:-3]
     if divider:
         print(f"\n{'=' * 80}")
@@ -77,7 +89,7 @@ class DefaultModeNetworkExperiment:
             self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         else:
             self.device = torch.device(device)
-        debug_log(f"Using device: {self.device}")
+        debug_log(f"Using device: {self.device}", verbose=False)
 
         # Create cache directory
         self.cache_dir = cache_dir or CACHE_DIR
@@ -86,12 +98,12 @@ class DefaultModeNetworkExperiment:
 
         # Initialize model and tokenizer
         print("Loading tokenizer and model...")
-        debug_log("Loading tokenizer...")
+        debug_log("Loading tokenizer...", verbose=False)
         self.tokenizer = AutoTokenizer.from_pretrained(model_name)
-        debug_log("Tokenizer loaded successfully")
+        debug_log("Tokenizer loaded successfully", verbose=False)
 
         # For flash attention compatibility
-        debug_log("Loading model with eager attention implementation...")
+        debug_log("Loading model with eager attention implementation...", verbose=False)
         try:
             self.model = AutoModelForCausalLM.from_pretrained(
                 model_name,
@@ -99,20 +111,20 @@ class DefaultModeNetworkExperiment:
                 torch_dtype=torch.float16,
                 attn_implementation="eager",  # Use eager implementation for compatibility
             )
-            debug_log("Model loaded successfully with eager attention")
+            debug_log("Model loaded successfully with eager attention", verbose=False)
         except Exception as e:
             debug_log(f"Error loading model: {e}", is_important=True)
             raise
         print("Model and tokenizer loaded")
 
         # Model dimensions
-        debug_log("Determining model dimensions...")
+        debug_log("Determining model dimensions...", verbose=False)
         if hasattr(self.model.config, "num_hidden_layers"):
             self.num_layers = self.model.config.num_hidden_layers
-            debug_log(f"Found num_hidden_layers: {self.num_layers}")
+            debug_log(f"Found num_hidden_layers: {self.num_layers}", verbose=False)
         elif hasattr(self.model.config, "n_layer"):
             self.num_layers = self.model.config.n_layer
-            debug_log(f"Found n_layer: {self.num_layers}")
+            debug_log(f"Found n_layer: {self.num_layers}", verbose=False)
         else:
             error_msg = "Could not determine number of layers in the model"
             debug_log(error_msg, is_important=True)
@@ -120,10 +132,10 @@ class DefaultModeNetworkExperiment:
 
         if hasattr(self.model.config, "num_attention_heads"):
             self.num_heads = self.model.config.num_attention_heads
-            debug_log(f"Found num_attention_heads: {self.num_heads}")
+            debug_log(f"Found num_attention_heads: {self.num_heads}", verbose=False)
         elif hasattr(self.model.config, "n_head"):
             self.num_heads = self.model.config.n_head
-            debug_log(f"Found n_head: {self.num_heads}")
+            debug_log(f"Found n_head: {self.num_heads}", verbose=False)
         else:
             error_msg = "Could not determine number of attention heads in the model"
             debug_log(error_msg, is_important=True)
@@ -138,12 +150,12 @@ class DefaultModeNetworkExperiment:
         # Debug prints to help identify the issue
         print(f"model_name type: {type(self.model_name)}")
         print(f"model type: {type(self.model)}")
-        debug_log(f"Model config: {self.model.config}")
+        debug_log(f"Model config: {self.model.config}", verbose=False)
 
         # Initialize DMN identifier
         debug_log("Initializing DMN identifier...", is_important=True)
         self.dmn_identifier = DefaultModeNetworkIdentifier(self.model, device=self.device, model_name=self.model_name)
-        debug_log("DMN identifier initialized successfully")
+        debug_log("DMN identifier initialized successfully", verbose=False)
 
         # Initialize generator with proper type annotation
         self.generator: Optional[InhibitedGenerator] = None
@@ -171,7 +183,7 @@ class DefaultModeNetworkExperiment:
             cache_dir=self.cache_dir,
             model_name=self.model_name,
         )
-        debug_log(f"Fetched {len(self.articles)} articles")
+        debug_log(f"Fetched {len(self.articles)} articles", verbose=False)
         return self.articles
 
     def prepare_text_chunks(
@@ -189,7 +201,7 @@ class DefaultModeNetworkExperiment:
         """
         debug_log(f"PREPARE_CHUNKS: Preparing text chunks (chunk_size={chunk_size}, use_cache={use_cache})", is_important=True)
         if not self.articles:
-            debug_log("No articles loaded. Fetching top Wikipedia articles first...")
+            debug_log("No articles loaded. Fetching top Wikipedia articles first...", verbose=False)
             print("No articles loaded. Fetching top Wikipedia articles first...")
             self.fetch_top_wikipedia_articles()
 
@@ -202,7 +214,7 @@ class DefaultModeNetworkExperiment:
             model_name=self.model_name,
         )
         
-        debug_log(f"Prepared {len(self.processed_chunks)} text chunks")
+        debug_log(f"Prepared {len(self.processed_chunks)} text chunks", verbose=False)
         return self.processed_chunks
 
     def identify_default_mode_network(
@@ -217,11 +229,11 @@ class DefaultModeNetworkExperiment:
         """
         debug_log(f"IDENTIFY_DMN: Starting DMN identification (sample_size={sample_size}, use_cache={use_cache})", is_important=True, divider=True)
         if not self.processed_chunks:
-            debug_log("No text chunks prepared. Preparing chunks first...")
+            debug_log("No text chunks prepared. Preparing chunks first...", verbose=False)
             print("No text chunks prepared. Preparing chunks first...")
             self.prepare_text_chunks()
         
-        debug_log(f"Using {min(sample_size, len(self.processed_chunks))} chunks for DMN identification")
+        debug_log(f"Using {min(sample_size, len(self.processed_chunks))} chunks for DMN identification", verbose=False)
         self.dmn_identifier.identify_default_mode_network(
             chunks=self.processed_chunks,
             tokenizer=self.tokenizer,
@@ -287,7 +299,7 @@ class DefaultModeNetworkExperiment:
         assert self.model is not None, "Model must be initialized"
         assert self.tokenizer is not None, "Tokenizer must be initialized"
         
-        debug_log(f"Creating generator with {len(self.dmn_identifier.top_default_mode_heads)} DMN heads")
+        debug_log(f"Creating generator with {len(self.dmn_identifier.top_default_mode_heads)} DMN heads", verbose=False)
         try:
             self.generator = InhibitedGenerator(
                 model=self.model,
@@ -295,7 +307,7 @@ class DefaultModeNetworkExperiment:
                 device=self.device,
                 top_default_mode_heads=self.dmn_identifier.top_default_mode_heads,
             )
-            debug_log("Generator initialized successfully")
+            debug_log("Generator initialized successfully", verbose=False)
         except Exception as e:
             debug_log(f"Error initializing generator: {e}", is_important=True)
             raise
@@ -324,11 +336,11 @@ class DefaultModeNetworkExperiment:
             Tuple of (normal_output, inhibited_output)
         """
         debug_log(f"GENERATE: Generating with inhibition_factor={inhibition_factor}", is_important=True)
-        debug_log(f"Prompt: '{prompt[:50]}...'")
+        debug_log(f"Prompt: '{prompt[:50]}...'", verbose=False)
         
         # Initialize generator if not already done
         if self.generator is None:
-            debug_log("Generator not initialized, initializing now...")
+            debug_log("Generator not initialized, initializing now...", verbose=False)
             self._initialize_generator()
 
         # The generator should be initialized by now, but if it's still None, we have a problem
@@ -346,7 +358,7 @@ class DefaultModeNetworkExperiment:
                 top_p=top_p,
                 do_sample=do_sample,
             )
-            debug_log("Generation successful")
+            debug_log("Generation successful", verbose=False)
             return results
         except Exception as e:
             debug_log(f"Error during generation: {e}", is_important=True)
@@ -409,15 +421,15 @@ class DefaultModeNetworkExperiment:
         
         # Make sure we have a model and tokenizer
         if not hasattr(self, "model") or not hasattr(self, "tokenizer"):
-            debug_log("Loading model and tokenizer...")
+            debug_log("Loading model and tokenizer...", verbose=False)
             self._load_model_and_tokenizer()
             
         # Identify or load the default mode network
         if dmn_file and os.path.exists(dmn_file):
-            debug_log(f"Loading pre-identified DMN from: {dmn_file}")
+            debug_log(f"Loading pre-identified DMN from: {dmn_file}", verbose=False)
             self.load_default_mode_network(dmn_file)
         else:
-            debug_log("No DMN file provided or file not found, identifying default mode network...")
+            debug_log("No DMN file provided or file not found, identifying default mode network...", verbose=False)
             self.fetch_top_wikipedia_articles(n=50, use_cache=use_cache, force_refresh=force_article_refresh)
             self.prepare_text_chunks(chunk_size=512, use_cache=use_cache)
             self.identify_default_mode_network(sample_size=n_chunks, use_cache=use_cache)
@@ -425,7 +437,7 @@ class DefaultModeNetworkExperiment:
             
             # Save the identified DMN
             dmn_save_path = os.path.join(output_dir, "identified_dmn.pkl")
-            debug_log(f"Saving identified DMN to: {dmn_save_path}")
+            debug_log(f"Saving identified DMN to: {dmn_save_path}", verbose=False)
             self.save_default_mode_network(dmn_save_path)
 
         # Step 5: Generate responses
@@ -439,18 +451,18 @@ class DefaultModeNetworkExperiment:
 
         for q_idx, query in enumerate(queries):
             query_results = []
-            debug_log(f"Processing query {q_idx+1}/{len(queries)}: '{query}'")
+            debug_log(f"Processing query {q_idx+1}/{len(queries)}: '{query}'", verbose=False)
             print(f"\nProcessing query: {query}")
 
             for factor in inhibition_factors:
                 try:
-                    debug_log(f"  Generating with inhibition factor: {factor:.2f}")
+                    debug_log(f"  Generating with inhibition factor: {factor:.2f}", verbose=False)
                     print(f"  Generating with inhibition factor: {factor:.2f}")
                     response = None
 
                     if factor == 0.0:
                         # Normal generation without inhibition
-                        debug_log("  Normal generation without inhibition")
+                        debug_log("  Normal generation without inhibition", verbose=False)
                         inputs = self.tokenizer(query, return_tensors="pt").to(self.device)
                         output = self.model.generate(
                             **inputs,
@@ -462,7 +474,7 @@ class DefaultModeNetworkExperiment:
                         response = self.tokenizer.decode(output[0], skip_special_tokens=True)
                     else:
                         # Generation with inhibition
-                        debug_log(f"  Generation with inhibition factor {factor}")
+                        debug_log(f"  Generation with inhibition factor {factor}", verbose=False)
                         try:
                             normal_response, inhibited_response = self.generate_with_inhibition(
                                 query, inhibition_factor=factor, max_new_tokens=max_new_tokens
@@ -472,7 +484,7 @@ class DefaultModeNetworkExperiment:
                             debug_log(f"  Error with inhibited generation: {e}", is_important=True)
                             print(f"Error with inhibited generation: {e}")
                             print("Falling back to normal generation")
-                            debug_log("  Falling back to normal generation")
+                            debug_log("  Falling back to normal generation", verbose=False)
                             # Fall back to normal generation
                             inputs = self.tokenizer(query, return_tensors="pt").to(self.device)
                             output = self.model.generate(
@@ -489,7 +501,7 @@ class DefaultModeNetworkExperiment:
                         result = {"query": query, "inhibition_factor": factor, "response": response}
                         query_results.append(result)
                         at_least_one_succeeded = True
-                        debug_log(f"  Generation successful (length: {len(response)})")
+                        debug_log(f"  Generation successful (length: {len(response)})", verbose=False)
                         print(f"  Generation successful (length: {len(response)})")
                     else:
                         debug_log("  Generation failed - empty response", is_important=True)
@@ -501,7 +513,7 @@ class DefaultModeNetworkExperiment:
 
             # Save intermediate results after each query
             if query_results and save_intermediate:
-                debug_log(f"Saving intermediate results after query {q_idx+1}")
+                debug_log(f"Saving intermediate results after query {q_idx+1}", verbose=False)
                 # Save only the new results for this query, not all accumulated results
                 save_query_outputs(
                     query_results,  # Use only query_results instead of all results
@@ -524,7 +536,7 @@ class DefaultModeNetworkExperiment:
                 output_dir=output_dir,
                 save_individual_files=False,
             )
-            debug_log(f"Saved {len(results)} results to {output_dir}")
+            debug_log(f"Saved {len(results)} results to {output_dir}", verbose=False)
         except Exception as e:
             debug_log(f"Error saving outputs: {e}", is_important=True)
             print(f"Error saving outputs: {e}")

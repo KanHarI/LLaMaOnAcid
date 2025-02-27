@@ -12,8 +12,20 @@ from ..model.dmn_identifier import HeadImportanceScore
 # Add debug logging function for consistency across modules
 from datetime import datetime
 
-def debug_log(msg: str, is_important: bool = False, divider: bool = False) -> None:
-    """Helper function to print consistent debug logs with timestamps."""
+def debug_log(msg: str, is_important: bool = False, divider: bool = False, verbose: bool = False) -> None:
+    """
+    Helper function to print consistent debug logs with timestamps.
+    
+    Args:
+        msg: Message to log
+        is_important: Whether the message is important (will be highlighted)
+        divider: Whether to add divider lines before and after the message
+        verbose: Whether to print the message if it's not important (for detailed logs)
+    """
+    # Skip non-important, verbose logs unless verbose is enabled
+    if not is_important and not verbose:
+        return
+        
     timestamp = datetime.now().strftime("%H:%M:%S.%f")[:-3]
     if divider:
         print(f"\n{'=' * 80}")
@@ -335,7 +347,10 @@ class InhibitedGenerator:
 
             return hook
 
-        # Log model architecture for debugging
+        # Register hooks for attention inhibition
+        hooks = []
+        
+        # When registering hooks, use verbose=False to prevent log spam
         debug_log(
             f"Registering hooks for model with {self.num_layers} layers and {self.num_heads} heads",
             is_important=True
@@ -347,39 +362,39 @@ class InhibitedGenerator:
         
         for layer_idx, head_masks in attention_masks.items():
             try:
-                debug_log(f"Registering hook for layer {layer_idx} with {len(head_masks)} heads")
+                # Use verbose=False for detailed hook logs
+                debug_log(f"Registering hook for layer {layer_idx} with {len(head_masks)} heads", verbose=False)
                 
                 if hasattr(self.model, "model") and hasattr(self.model.model, "layers"):
                     # For LLaMA and Mistral models
                     attn_module = self.model.model.layers[layer_idx].self_attn
-                    debug_log(f"Found LLaMA/Mistral attention module for layer {layer_idx}")
+                    debug_log(f"Found LLaMA/Mistral attention module for layer {layer_idx}", verbose=False)
                 elif hasattr(self.model, "layers"):
                     # Some other architectures
                     attn_module = self.model.layers[layer_idx].self_attn
-                    debug_log(f"Found generic attention module for layer {layer_idx}")
+                    debug_log(f"Found generic attention module for layer {layer_idx}", verbose=False)
                 elif hasattr(self.model, "h"):
                     # For other architectures (like GPT-2)
                     attn_module = self.model.h[layer_idx].attn
-                    debug_log(f"Found GPT-2 style attention module for layer {layer_idx}")
+                    debug_log(f"Found GPT-2 style attention module for layer {layer_idx}", verbose=False)
                 else:
                     debug_log(f"Warning: Could not find attention module for layer {layer_idx}", is_important=True)
                     error_count += 1
                     continue
 
                 # Log the attention module type
-                debug_log(f"Attention module type: {type(attn_module).__name__}")
+                debug_log(f"Attention module type: {type(attn_module).__name__}", verbose=False)
                 
                 # Register the hook
                 hook = attn_module.register_forward_hook(get_inhibition_hook(layer_idx, head_masks))
                 hooks.append(hook)
                 registered_count += 1
-                debug_log(f"Successfully registered hook for layer {layer_idx}")
+                debug_log(f"Successfully registered hook for layer {layer_idx}", verbose=False)
 
             except Exception as e:
                 debug_log(f"Error registering hook for layer {layer_idx}: {e}", is_important=True)
                 error_count += 1
-                continue
-
+        
         debug_log(f"Registered {registered_count} hooks with {error_count} errors")
 
         # Generate with inhibition

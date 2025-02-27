@@ -18,8 +18,20 @@ HeadImportanceScore = List[Tuple[int, int, float]]
 
 
 # Add debug logging function for consistency across modules
-def debug_log(msg: str, is_important: bool = False, divider: bool = False) -> None:
-    """Helper function to print consistent debug logs with timestamps."""
+def debug_log(msg: str, is_important: bool = False, divider: bool = False, verbose: bool = False) -> None:
+    """
+    Helper function to print consistent debug logs with timestamps.
+    
+    Args:
+        msg: Message to log
+        is_important: Whether the message is important (will be highlighted)
+        divider: Whether to add divider lines before and after the message
+        verbose: Whether to print the message if it's not important (for detailed logs)
+    """
+    # Skip non-important, verbose logs unless verbose is enabled
+    if not is_important and not verbose:
+        return
+        
     timestamp = datetime.now().strftime("%H:%M:%S.%f")[:-3]
     if divider:
         print(f"\n{'=' * 80}")
@@ -69,10 +81,10 @@ class DefaultModeNetworkIdentifier:
         debug_log("Determining model dimensions...")
         if hasattr(model.config, "num_hidden_layers"):
             self.num_layers = model.config.num_hidden_layers
-            debug_log(f"Found num_hidden_layers: {self.num_layers}")
+            debug_log(f"Found num_hidden_layers: {self.num_layers}", verbose=False)
         elif hasattr(model.config, "n_layer"):
             self.num_layers = model.config.n_layer
-            debug_log(f"Found n_layer: {self.num_layers}")
+            debug_log(f"Found n_layer: {self.num_layers}", verbose=False)
         else:
             error_msg = "Could not determine number of layers in the model"
             debug_log(error_msg, is_important=True)
@@ -80,10 +92,10 @@ class DefaultModeNetworkIdentifier:
 
         if hasattr(model.config, "num_attention_heads"):
             self.num_heads = model.config.num_attention_heads
-            debug_log(f"Found num_attention_heads: {self.num_heads}")
+            debug_log(f"Found num_attention_heads: {self.num_heads}", verbose=False)
         elif hasattr(model.config, "n_head"):
             self.num_heads = model.config.n_head
-            debug_log(f"Found n_head: {self.num_heads}")
+            debug_log(f"Found n_head: {self.num_heads}", verbose=False)
         else:
             error_msg = "Could not determine number of attention heads in the model"
             debug_log(error_msg, is_important=True)
@@ -94,7 +106,7 @@ class DefaultModeNetworkIdentifier:
         self.head_importance_scores: HeadImportanceScore = []
         self.top_default_mode_heads: HeadImportanceScore = []
         
-        debug_log(f"DMN identifier initialized for model with {self.num_layers} layers and {self.num_heads} heads per layer")
+        debug_log(f"DMN identifier initialized for model with {self.num_layers} layers and {self.num_heads} heads per layer", is_important=True)
 
     def register_attention_hooks(self) -> List[torch.utils.hooks.RemovableHandle]:
         """
@@ -166,7 +178,7 @@ class DefaultModeNetworkIdentifier:
             return hook
 
         # Register hooks for each attention layer and head
-        debug_log(f"Registering hooks for {self.num_layers} layers with {self.num_heads} heads each")
+        debug_log(f"Registering hooks for {self.num_layers} layers with {self.num_heads} heads each", is_important=True)
         registered_count = 0
         error_count = 0
         
@@ -176,23 +188,23 @@ class DefaultModeNetworkIdentifier:
                 if hasattr(self.model, "model") and hasattr(self.model.model, "layers"):
                     # For LLaMA/Mistral models
                     attn_module = self.model.model.layers[layer_idx].self_attn
-                    debug_log(f"Layer {layer_idx}: Found LLaMA/Mistral style attention module")
+                    debug_log(f"Layer {layer_idx}: Found LLaMA/Mistral style attention module", verbose=False)
                 elif hasattr(self.model, "h"):
                     # For other architectures like GPT-2
                     attn_module = self.model.h[layer_idx].attn
-                    debug_log(f"Layer {layer_idx}: Found GPT-2 style attention module")
+                    debug_log(f"Layer {layer_idx}: Found GPT-2 style attention module", verbose=False)
                 else:
                     debug_log(f"Layer {layer_idx}: Could not find attention module", is_important=True)
                     error_count += 1
                     continue
 
                 # Log the attention module type and properties
-                debug_log(f"Layer {layer_idx} attention module: {type(attn_module).__name__}")
+                debug_log(f"Layer {layer_idx} attention module: {type(attn_module).__name__}", verbose=False)
                 
                 # Check for flash attention
                 has_flash = hasattr(attn_module, "flash_attn") and attn_module.flash_attn
                 if has_flash:
-                    debug_log(f"Layer {layer_idx} uses flash attention")
+                    debug_log(f"Layer {layer_idx} uses flash attention", verbose=False)
                 
                 # Register hooks for each head in this layer
                 for head_idx in range(self.num_heads):
@@ -241,11 +253,11 @@ class DefaultModeNetworkIdentifier:
 
                 if "default_mode_activations" in cached_data:
                     self.default_mode_activations = cached_data["default_mode_activations"]
-                    debug_log(f"Loaded activations for {len(self.default_mode_activations)} layers")
+                    debug_log(f"Loaded activations for {len(self.default_mode_activations)} layers", verbose=False)
                     
                     # Log the structure of loaded activations
                     layer_counts = {layer: len(heads) for layer, heads in self.default_mode_activations.items()}
-                    debug_log(f"Activation structure: {layer_counts}")
+                    debug_log(f"Activation structure: {layer_counts}", verbose=False)
 
                     # Calculate importance scores from the loaded activations
                     self._calculate_head_importance_scores()
@@ -312,7 +324,7 @@ class DefaultModeNetworkIdentifier:
                 }
                 with open(activations_cache_file, "wb") as f:
                     pickle.dump(cache_data, f)
-                debug_log(f"Cached DMN activations for {len(self.default_mode_activations)} layers")
+                debug_log(f"Cached DMN activations for {len(self.default_mode_activations)} layers", verbose=False)
             except Exception as e:
                 debug_log(f"Error caching DMN activations: {e}", is_important=True)
 
@@ -330,7 +342,7 @@ class DefaultModeNetworkIdentifier:
             
         # Log the structure of recorded activations
         layer_counts = {layer: len(heads) for layer, heads in self.default_mode_activations.items()}
-        debug_log(f"Recorded activations for {len(self.default_mode_activations)} layers: {layer_counts}")
+        debug_log(f"Recorded activations for {len(self.default_mode_activations)} layers: {layer_counts}", verbose=False)
         
         avg_activations: Dict[int, Dict[int, float]] = {}
         for layer_idx in self.default_mode_activations:
@@ -398,29 +410,25 @@ class DefaultModeNetworkIdentifier:
             if layer_idx in heads_by_layer:
                 layer_heads = heads_by_layer[layer_idx][:top_n_per_layer]  # Take top N heads from this layer
                 selected_heads.extend(layer_heads)
-                debug_log(f"Layer {layer_idx}: Selected {len(layer_heads)} heads")
+                debug_log(f"Layer {layer_idx}: Selected {len(layer_heads)} heads", verbose=False)
         
         self.top_default_mode_heads = selected_heads
         
-        debug_log(f"Selected total of {len(selected_heads)} DMN heads across all layers")
+        debug_log(f"Selected total of {len(selected_heads)} DMN heads across all layers", is_important=True)
         
-        # Print sample of selected heads
-        debug_log("Sample of selected heads:")
-        for layer_idx in sorted(heads_by_layer.keys())[:5]:  # Show first 5 layers
+        # Print selection details by layer
+        for layer_idx in range(self.num_layers):
             if layer_idx == 0 or layer_idx == self.num_layers - 1:
-                debug_log(f"  Layer {layer_idx}: SKIPPED (first/last layer)")
+                debug_log(f"  Layer {layer_idx}: SKIPPED (first/last layer)", verbose=False)
                 continue
-            heads = heads_by_layer[layer_idx][:top_n_per_layer]
-            head_info = [(h[1], f"{h[2]:.4f}") for h in heads]
-            debug_log(f"  Layer {layer_idx}: {head_info}")
+
+            if layer_idx in self.top_default_mode_heads:
+                head_info = ", ".join([f"head {h}" for h in self.top_default_mode_heads[layer_idx]])
+                debug_log(f"  Layer {layer_idx}: {head_info}", verbose=False)
         
-        # Analyze layer distribution
-        layer_counts = {}
-        for layer_idx, _, _ in self.top_default_mode_heads:
-            layer_counts[layer_idx] = layer_counts.get(layer_idx, 0) + 1
-        
-        layer_dist = sorted(layer_counts.items())
-        debug_log(f"Layer distribution in top DMN heads: {layer_dist}")
+        # Log distribution of heads by layer
+        layer_dist = Counter([layer for layer, _ in selected_heads])
+        debug_log(f"Layer distribution in top DMN heads: {layer_dist}", verbose=False)
         
         return self.top_default_mode_heads
 
