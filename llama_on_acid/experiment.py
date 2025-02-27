@@ -367,41 +367,35 @@ class DefaultModeNetworkExperiment:
 
     def run_experiment(
         self,
-        queries: Optional[List[str]] = None,
-        inhibition_factors: Optional[List[float]] = None,
-        max_new_tokens: int = int(DEFAULT_GENERATION_PARAMS["max_new_tokens"]),
-        n_chunks: int = DEFAULT_SAMPLE_SIZE,
-        chunk_size: int = DEFAULT_CHUNK_SIZE,
+        queries: List[str] = DEFAULT_QUERIES,
+        inhibition_factors: List[float] = DEFAULT_INHIBITION_FACTORS,
+        max_new_tokens: int = 100,
+        n_chunks: int = 100,
         dmn_file: Optional[str] = None,
         use_cache: bool = True,
         force_article_refresh: bool = False,
-        output_dir: str = "query_outputs",
+        output_dir: str = "results",
+        save_intermediate: bool = False,
     ) -> List[Dict[str, Any]]:
         """
-        Run the full experiment:
-        1. Fetch Wikipedia articles
-        2. Prepare text chunks
-        3. Identify default mode network
-        4. Select top DMN heads
-        5. Generate responses for queries with and without inhibition
-        6. Save the outputs
+        Run the full experiment, including DMN identification and inhibited generation.
 
         Args:
-            queries: List of queries to answer (defaults to DEFAULT_QUERIES)
+            queries: List of queries to test
             inhibition_factors: List of inhibition factors to test
-            max_new_tokens: Maximum number of tokens to generate
-            n_chunks: Number of chunks to process
-            chunk_size: Size of chunks in tokens
-            dmn_file: Path to a file containing pre-identified DMN heads
-            use_cache: Whether to use cached data (articles, chunks, activations)
+            max_new_tokens: Maximum number of tokens to generate for each prompt
+            n_chunks: Number of text chunks to use for DMN identification
+            dmn_file: Path to pre-identified DMN file (optional)
+            use_cache: Whether to use cached data when available
             force_article_refresh: Whether to force a refresh of article data
             output_dir: Directory to save outputs
+            save_intermediate: Whether to save intermediate results after each query
 
         Returns:
             List of result dictionaries
         """
         debug_log(f"RUN_EXPERIMENT: Starting full experiment with {self.model_name}", is_important=True, divider=True)
-        debug_log(f"Parameters: max_tokens={max_new_tokens}, n_chunks={n_chunks}, chunk_size={chunk_size}, use_cache={use_cache}")
+        debug_log(f"Parameters: max_tokens={max_new_tokens}, n_chunks={n_chunks}, use_cache={use_cache}")
         
         print(f"Running experiment with {self.model_name}")
         results = []
@@ -435,7 +429,7 @@ class DefaultModeNetworkExperiment:
         try:
             debug_log("STEP 2: Preparing text chunks", divider=True)
             print("Preparing text chunks...")
-            self.prepare_text_chunks(chunk_size=chunk_size, use_cache=use_cache)
+            self.prepare_text_chunks(chunk_size=max_new_tokens, use_cache=use_cache)
             print(f"Prepared {len(self.processed_chunks)} text chunks")
         except Exception as e:
             debug_log(f"Error preparing text chunks: {e}", is_important=True)
@@ -574,20 +568,26 @@ class DefaultModeNetworkExperiment:
             results.extend(query_results)
 
             # Save intermediate results after each query
-            if query_results:
+            if query_results and save_intermediate:
                 debug_log(f"Saving intermediate results after query {q_idx+1}")
                 save_query_outputs(
                     results,
                     model_name=self.model_name,
                     output_dir=output_dir,
                     suffix=f"_intermediate_{len(results)}",
+                    save_individual_files=True,
                 )
 
         # Step 6: Save outputs
         debug_log("STEP 6: Saving final outputs", divider=True)
         try:
             print("\nSaving outputs...")
-            save_query_outputs(results, model_name=self.model_name, output_dir=output_dir)
+            save_query_outputs(
+                results, 
+                model_name=self.model_name, 
+                output_dir=output_dir,
+                save_individual_files=False,
+            )
             debug_log(f"Saved {len(results)} results to {output_dir}")
         except Exception as e:
             debug_log(f"Error saving outputs: {e}", is_important=True)

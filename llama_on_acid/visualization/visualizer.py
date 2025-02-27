@@ -177,6 +177,7 @@ def save_query_outputs(
     model_name: str = "model",
     output_dir: str = "query_outputs",
     suffix: str = "",
+    save_individual_files: bool = True,
 ) -> None:
     """
     Save the query outputs to files.
@@ -186,6 +187,7 @@ def save_query_outputs(
         model_name: Name of the model for filenames
         output_dir: Directory to save the outputs
         suffix: Optional suffix for the output files
+        save_individual_files: Whether to save individual files for each query (set to False for final outputs)
     """
     if not results:
         print("Warning: No results to save.")
@@ -238,34 +240,35 @@ def save_query_outputs(
 
         print(f"Saved combined outputs to {output_file}")
 
-        # Create individual files for each query
-        for query, query_list in query_results.items():
-            # Create a safe filename from the query
-            query_filename = query.replace(" ", "_").replace("?", "").replace(".", "")[:30]
-            query_filename = "".join(c for c in query_filename if c.isalnum() or c == "_")
+        # Create individual files for each query only if requested
+        if save_individual_files:
+            for query, query_list in query_results.items():
+                # Create a safe filename from the query
+                query_filename = query.replace(" ", "_").replace("?", "").replace(".", "")[:30]
+                query_filename = "".join(c for c in query_filename if c.isalnum() or c == "_")
 
-            query_output_file = os.path.join(
-                output_dir, f"{model_name_safe}_{query_filename}{suffix}.txt"
-            )
+                query_output_file = os.path.join(
+                    output_dir, f"{model_name_safe}_{query_filename}{suffix}.txt"
+                )
 
-            with open(query_output_file, "w") as f:
-                f.write(f"Results for query: {query}\n")
-                f.write(f"Model: {model_name}\n")
-                f.write(f"Timestamp: {timestamp}\n")
-                f.write("-" * 80 + "\n\n")
+                with open(query_output_file, "w") as f:
+                    f.write(f"Results for query: {query}\n")
+                    f.write(f"Model: {model_name}\n")
+                    f.write(f"Timestamp: {timestamp}\n")
+                    f.write("-" * 80 + "\n\n")
 
-                # Sort by inhibition factor
-                query_list.sort(key=lambda x: x.get("inhibition_factor", 0.0))
+                    # Sort by inhibition factor
+                    query_list.sort(key=lambda x: x.get("inhibition_factor", 0.0))
 
-                for result in query_list:
-                    factor = result.get("inhibition_factor", 0.0)
-                    response = result.get("response", "No response generated")
+                    for result in query_list:
+                        factor = result.get("inhibition_factor", 0.0)
+                        response = result.get("response", "No response generated")
 
-                    f.write(f"INHIBITION FACTOR: {factor}\n\n")
-                    f.write(f"RESPONSE:\n{response}\n\n")
-                    f.write("-" * 40 + "\n\n")
+                        f.write(f"INHIBITION FACTOR: {factor}\n\n")
+                        f.write(f"RESPONSE:\n{response}\n\n")
+                        f.write("-" * 40 + "\n\n")
 
-        print(f"Saved individual query outputs to {output_dir}")
+            print(f"Saved individual query outputs to {output_dir}")
 
     except Exception as e:
         print(f"Error saving query outputs: {e}")

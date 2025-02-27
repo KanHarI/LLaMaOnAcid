@@ -57,6 +57,11 @@ def main() -> None:
         action="store_true",
         help="Force refresh of article data (default: False)",
     )
+    parser.add_argument(
+        "--no-save-intermediate",
+        action="store_true",
+        help="Don't save intermediate results after each query (default: save intermediate results)",
+    )
 
     # Query arguments
     parser.add_argument(
@@ -108,6 +113,7 @@ def main() -> None:
         use_cache=not args.no_cache,
         force_article_refresh=args.force_refresh,
         output_dir=output_dir,
+        save_intermediate=not args.no_save_intermediate,
     )
 
     # Save the full results

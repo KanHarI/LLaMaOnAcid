@@ -38,7 +38,8 @@ QUERIES=(
     "How does the brain work?"
 )
 
-# Run the experiment using the new command-line interface with properly quoted queries
+# Run the experiment using the command-line interface with properly quoted queries
+# Now saving intermediate files but avoiding duplication with our code changes
 ./run_experiment.py \
     --model "$MODEL_NAME" \
     --output-dir "$OUTPUT_DIR" \
