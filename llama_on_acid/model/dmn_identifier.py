@@ -431,17 +431,26 @@ class DefaultModeNetworkIdentifier:
         Args:
             filepath: Path to save the data
         """
+        # Import here to avoid circular imports
+        try:
+            from ..utils import get_git_commit_hash
+            git_hash = get_git_commit_hash()
+        except ImportError:
+            git_hash = None
+            
         data = {
             "model_name": self.model_name,
             "head_importance_scores": self.head_importance_scores,
             "top_default_mode_heads": self.top_default_mode_heads,
             "timestamp": datetime.now().isoformat(),
+            "git_commit": git_hash,
         }
 
         with open(filepath, "wb") as f:
             pickle.dump(data, f)
 
         print(f"Default mode network saved to {filepath}")
+        print(f"Git commit: {git_hash or 'Not available'}")
 
     def load_default_mode_network(self, filepath: str) -> None:
         """
@@ -460,6 +469,19 @@ class DefaultModeNetworkIdentifier:
                 print(f"Current model is {self.model_name}")
                 print("The head indices may not be compatible between different models.")
 
+            # Display git commit hash information if available
+            if "git_commit" in data and data["git_commit"]:
+                print(f"DMN was identified with git commit: {data['git_commit']}")
+            
+            # Try to get current git commit hash for comparison
+            try:
+                from ..utils import get_git_commit_hash
+                current_hash = get_git_commit_hash()
+                if current_hash and "git_commit" in data and data["git_commit"] and current_hash != data["git_commit"]:
+                    print(f"Warning: Current git commit ({current_hash}) differs from the one used for identification ({data['git_commit']})")
+            except ImportError:
+                pass
+                
             # Load data with error handling for different formats
             if "head_importance_scores" in data:
                 self.head_importance_scores = data["head_importance_scores"]

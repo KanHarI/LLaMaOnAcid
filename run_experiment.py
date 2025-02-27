@@ -11,6 +11,7 @@ import torch
 
 from llama_on_acid.config import DEFAULT_MODEL_NAME, DEFAULT_QUERIES
 from llama_on_acid.experiment import DefaultModeNetworkExperiment
+from llama_on_acid.utils import get_git_commit_hash
 
 
 def main() -> None:
@@ -153,6 +154,19 @@ def main() -> None:
     with open(results_file, "wb") as f:
         pickle.dump(results, f)
     print(f"Saved full results to {results_file}")
+    
+    # Save metadata file with git hash
+    metadata_file = os.path.join(output_dir, "experiment_metadata.txt")
+    with open(metadata_file, "w") as f:
+        f.write(f"LLaMa On Acid Experiment\n")
+        f.write(f"========================\n\n")
+        f.write(f"Experiment run at: {datetime.now().isoformat()}\n")
+        f.write(f"Model: {args.model}\n")
+        f.write(f"Git commit: {get_git_commit_hash() or 'Not available'}\n\n")
+        f.write(f"Command line arguments:\n")
+        for arg, value in vars(args).items():
+            f.write(f"  {arg}: {value}\n")
+    print(f"Saved experiment metadata to {metadata_file}")
 
     # Analyze and visualize results
     try:

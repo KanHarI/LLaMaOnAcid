@@ -197,6 +197,13 @@ def save_query_outputs(
             f.write("No results were generated during the experiment.\n")
         return
 
+    # Import here to avoid circular imports
+    from ..utils import get_git_commit_hash
+
+    # Get the current git commit hash
+    git_hash = get_git_commit_hash()
+    commit_info = f"Git commit: {git_hash or 'Not available'}"
+
     # Create the output directory if it doesn't exist
     os.makedirs(output_dir, exist_ok=True)
 
@@ -210,6 +217,7 @@ def save_query_outputs(
         with open(output_file, "w") as f:
             f.write(f"Experiment results for {model_name}\n")
             f.write(f"Timestamp: {timestamp}\n")
+            f.write(f"{commit_info}\n")
             f.write("=" * 80 + "\n\n")
 
             # Group results by query
@@ -255,6 +263,7 @@ def save_query_outputs(
                     f.write(f"Results for query: {query}\n")
                     f.write(f"Model: {model_name}\n")
                     f.write(f"Timestamp: {timestamp}\n")
+                    f.write(f"{commit_info}\n")
                     f.write("-" * 80 + "\n\n")
 
                     # Sort by inhibition factor

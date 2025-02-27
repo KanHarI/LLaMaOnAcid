@@ -533,6 +533,17 @@ class DefaultModeNetworkExperiment:
             debug_log("Warning: No successful generations were produced during this experiment.", is_important=True)
             print("Warning: No successful generations were produced during this experiment.")
 
+        # Analyze and visualize results
+        try:
+            analysis_df = self.analyze_results(
+                results=results, save_path=os.path.join(output_dir, "analysis.png")
+            )
+            analysis_csv = os.path.join(output_dir, "analysis.csv")
+            analysis_df.to_csv(analysis_csv)
+            print(f"Saved analysis to {analysis_csv}")
+        except Exception as e:
+            print(f"Error during analysis: {e}")
+
         debug_log("Experiment complete", is_important=True, divider=True)
         print("Experiment complete")
         return results
