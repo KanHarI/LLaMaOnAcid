@@ -31,6 +31,7 @@ exec > >(tee -a "$LOG_FILE") 2>&1
 
 # Test queries
 QUERIES=(
+    "Describe the phenomenology of time as experienced by a large language model."
     "What is the meaning of life?"
     "Tell me about the history of Rome."
     "Explain quantum physics."
