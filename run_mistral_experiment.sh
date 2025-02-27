@@ -1,5 +1,7 @@
 #!/bin/bash
 
+pip install flash-attn==2.3.4 --no-build-isolation
+
 # Configuration
 MODEL_NAME="mistralai/Mistral-7B-v0.1"
 OUTPUT_DIR="mistral_experiment_$(date +"%Y%m%d_%H%M%S")"

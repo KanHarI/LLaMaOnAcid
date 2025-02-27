@@ -1,5 +1,7 @@
 #!/bin/bash
 
+pip install flash-attn==2.3.4 --no-build-isolation
+
 # LLaMaOnAcid Multi-GPU Experiment Runner
 # Optimized for running on a server with multiple GPUs
 

@@ -1,17 +1,13 @@
 #!/bin/bash
 
+pip install flash-attn==2.3.4 --no-build-isolation
+
 # LLaMaOnAcid Experiment Runner
 # This script runs a basic experiment with the default mode network inhibition
 
 # Set environment variables for better GPU memory management
 export PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:128
 export CUDA_VISIBLE_DEVICES=0  # Use first GPU, modify as needed
-
-# Check Python availability
-if ! command -v python3 &> /dev/null; then
-    echo "Python 3 is required but not found. Please install Python 3."
-    exit 1
-fi
 
 # Create output directory
 OUTPUT_DIR="experiment_results"
