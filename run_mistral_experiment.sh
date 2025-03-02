@@ -155,7 +155,7 @@ else
 fi
 
 # Construct command with optional arguments
-CMD="./run_experiment.py --model \"$MODEL_NAME\" --output-dir \"$OUTPUT_DIR\" --queries ${QUERIES[*]} --gamma $GAMMA"
+CMD="./run_experiment.py --model \"$MODEL_NAME\" --output-dir \"$OUTPUT_DIR\" --gamma $GAMMA"
 
 # Add DMN file if it exists
 if [ -f "$DMN_FILE" ]; then
@@ -164,7 +164,11 @@ fi
 
 # Add inhibition factors if specified
 if [ ${#FACTORS[@]} -gt 0 ]; then
-    CMD="$CMD --factors ${FACTORS[*]}"
+    FACTOR_ARGS=""
+    for factor in "${FACTORS[@]}"; do
+        FACTOR_ARGS="$FACTOR_ARGS --factors $factor"
+    done
+    CMD="$CMD $FACTOR_ARGS"
 fi
 
 # Add max tokens if specified
@@ -172,7 +176,12 @@ if [ ! -z "$MAX_TOKENS" ]; then
     CMD="$CMD --max-tokens $MAX_TOKENS"
 fi
 
-# Run the experiment using the command-line interface with properly quoted queries
+# Add queries with proper quoting
+for query in "${QUERIES[@]}"; do
+    CMD="$CMD --queries \"$query\""
+done
+
+# Run the experiment
 eval $CMD
 
 echo -e "\n✅ Experiment completed!"
