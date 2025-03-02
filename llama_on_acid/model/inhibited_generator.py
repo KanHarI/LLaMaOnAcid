@@ -392,7 +392,31 @@ class InhibitedGenerator:
                                 )
                                 continue
 
-                            scaling_factor[:, :, start_idx:end_idx] *= scale
+                            # Check if the tensor has enough dimensions for the indexing operation
+                            if len(scaling_factor.shape) < 3:
+                                debug_log(
+                                    f"Layer {layer_idx}, Head {head_idx}: Scaling factor doesn't have enough dimensions: {scaling_factor.shape}. Skipping inhibition.",
+                                    is_important=True,
+                                )
+                                return output
+
+                            # Check if tensor dimensions match expected indices
+                            if scaling_factor.shape[0] <= 0 or scaling_factor.shape[1] <= 0:
+                                debug_log(
+                                    f"Layer {layer_idx}, Head {head_idx}: Scaling factor has invalid batch or sequence dimensions: {scaling_factor.shape}. Skipping inhibition.",
+                                    is_important=True,
+                                )
+                                return output
+
+                            # Safe indexing
+                            try:
+                                scaling_factor[:, :, start_idx:end_idx] *= scale
+                            except IndexError as e:
+                                debug_log(
+                                    f"Layer {layer_idx}, Head {head_idx}: IndexError when applying scaling: {str(e)}. Scaling factor shape: {scaling_factor.shape}, indices: [:, :, {start_idx}:{end_idx}]. Skipping.",
+                                    is_important=True,
+                                )
+                                return output
 
                         # Create a new output with modified hidden states
                         output_list = list(output)
@@ -429,18 +453,52 @@ class InhibitedGenerator:
 
                                 # Create a scaling tensor that's 1 except for the target head
                                 scaling = torch.ones_like(attn_weights)
-                                scaling[:, :, head_idx, :] = scale_factor
 
-                                # Apply scaling
-                                new_weights = attn_weights * scaling
+                                # Add safety check for tensor dimensions
+                                if len(scaling.shape) < 4:
+                                    debug_log(
+                                        f"Layer {layer_idx}, head {head_idx}: Scaling tensor doesn't have enough dimensions: {scaling.shape}. Skipping.",
+                                        is_important=True,
+                                    )
+                                    return None
+
+                                # Safe indexing with try-except
+                                try:
+                                    scaling[:, :, head_idx, :] = scale_factor
+                                except IndexError as e:
+                                    debug_log(
+                                        f"Layer {layer_idx}, head {head_idx}: IndexError when applying inhibition: {str(e)}. Scaling shape: {scaling.shape}, indices: [:, :, {head_idx}, :]. Skipping.",
+                                        is_important=True,
+                                    )
+                                    return None
+
+                                debug_log(
+                                    f"Layer {layer_idx}, head {head_idx}: Scaling tensor shape: {scaling.shape}",
+                                    verbose=bool(verbose),
+                                )
+
+                                # Apply scaling safely
+                                try:
+                                    new_weights = attn_weights * scaling
+                                except RuntimeError as e:
+                                    debug_log(
+                                        f"Layer {layer_idx}, head {head_idx}: RuntimeError when applying inhibition: {str(e)}. Shapes: attn_weights {attn_weights.shape}, scaling {scaling.shape}. Skipping.",
+                                        is_important=True,
+                                    )
+                                    return None
+
+                                debug_log(
+                                    f"Layer {layer_idx}, head {head_idx}: New weights shape: {new_weights.shape}",
+                                    verbose=bool(verbose),
+                                )
 
                                 # Update the output tuple
                                 output_list = list(output)
                                 output_list[3] = new_weights
-                                # Return the modified output as a tuple
+                                # Return the modified output as a tuple with inhibited weights
                                 return tuple(output_list)
 
-                            # If no modifications were made, return the original output
+                            # If we reach here, no inhibition was applied
                             return output
                         except IndexError as e:
                             debug_log(
@@ -732,14 +790,40 @@ class InhibitedGenerator:
 
                     # Create a scaling tensor that's 1 except for the target head
                     scaling = torch.ones_like(attn_weights)
-                    scaling[:, :, head_idx, :] = inhibition_factor
+
+                    # Add safety check for tensor dimensions
+                    if len(scaling.shape) < 4:
+                        debug_log(
+                            f"Layer {layer_idx}, head {head_idx}: Scaling tensor doesn't have enough dimensions: {scaling.shape}. Skipping.",
+                            is_important=True,
+                        )
+                        return None
+
+                    # Safe indexing with try-except
+                    try:
+                        scaling[:, :, head_idx, :] = inhibition_factor
+                    except IndexError as e:
+                        debug_log(
+                            f"Layer {layer_idx}, head {head_idx}: IndexError when applying inhibition: {str(e)}. Scaling shape: {scaling.shape}, indices: [:, :, {head_idx}, :]. Skipping.",
+                            is_important=True,
+                        )
+                        return None
+
                     debug_log(
                         f"Layer {layer_idx}, head {head_idx}: Scaling tensor shape: {scaling.shape}",
                         verbose=bool(verbose),
                     )
 
-                    # Apply scaling
-                    new_weights = attn_weights * scaling
+                    # Apply scaling safely
+                    try:
+                        new_weights = attn_weights * scaling
+                    except RuntimeError as e:
+                        debug_log(
+                            f"Layer {layer_idx}, head {head_idx}: RuntimeError when applying inhibition: {str(e)}. Shapes: attn_weights {attn_weights.shape}, scaling {scaling.shape}. Skipping.",
+                            is_important=True,
+                        )
+                        return None
+
                     debug_log(
                         f"Layer {layer_idx}, head {head_idx}: New weights shape: {new_weights.shape}",
                         verbose=bool(verbose),
@@ -788,11 +872,33 @@ class InhibitedGenerator:
                     start_idx = head_idx * head_dim
                     end_idx = (head_idx + 1) * head_dim
 
+                    # Validate indices
+                    if start_idx >= hidden_states.shape[-1] or end_idx > hidden_states.shape[-1]:
+                        debug_log(
+                            f"Layer {layer_idx}, head {head_idx}: Invalid head dimensions for hidden states shape {hidden_states.shape}. start_idx={start_idx}, end_idx={end_idx}. Skipping.",
+                            is_important=True,
+                        )
+                        return None
+
                     # Apply scaling only to the specific head's portion of hidden states
-                    scaling_factor[:, :, start_idx:end_idx] *= inhibition_factor
+                    try:
+                        scaling_factor[:, :, start_idx:end_idx] *= inhibition_factor
+                    except IndexError as e:
+                        debug_log(
+                            f"Layer {layer_idx}, head {head_idx}: IndexError when applying inhibition to hidden states: {str(e)}. Scaling factor shape: {scaling_factor.shape}, indices: [:, :, {start_idx}:{end_idx}]. Skipping.",
+                            is_important=True,
+                        )
+                        return None
 
                     # Apply scaling
-                    new_hidden_states = hidden_states * scaling_factor
+                    try:
+                        new_hidden_states = hidden_states * scaling_factor
+                    except RuntimeError as e:
+                        debug_log(
+                            f"Layer {layer_idx}, head {head_idx}: RuntimeError when multiplying hidden states: {str(e)}. Shapes: hidden_states {hidden_states.shape}, scaling_factor {scaling_factor.shape}. Skipping.",
+                            is_important=True,
+                        )
+                        return None
 
                     # Update the output tuple
                     output_list = list(output)
