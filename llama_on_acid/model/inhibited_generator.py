@@ -344,69 +344,135 @@ class InhibitedGenerator:
             layer_idx: int, head_masks: Dict[int, float]
         ) -> Callable[[Any, Any, Any], Optional[Tuple[Any, ...]]]:
             def hook(module: Any, input: Any, output: Any) -> Optional[Tuple[Any, ...]]:
-                # Different models have different output formats for attention
-                # For Mistral models (using attention with different output format)
-                if isinstance(output, tuple) and len(output) == 2:
-                    # This is the Mistral format (output is a tuple with hidden states and attention weights)
-                    # First element is typically the hidden states, second might contain attention info
-                    hidden_states = output[0]
+                try:
+                    # Different models have different output formats for attention
+                    # For Mistral models (using attention with different output format)
+                    if isinstance(output, tuple) and len(output) == 2:
+                        # This is the Mistral format (output is a tuple with hidden states and attention weights)
+                        # First element is typically the hidden states, second might contain attention info
+                        hidden_states = output[0]
 
-                    # Apply scaling to hidden states directly for Mistral
-                    # This is an approximation since we're not directly modifying the attention weights
-                    scaling_factor = torch.ones_like(hidden_states)
-                    head_dim = hidden_states.shape[-1] // self.num_heads
+                        debug_log(
+                            f"Mistral attention format detected for layer {layer_idx}, hidden states shape: {hidden_states.shape}"
+                        )
 
-                    for head_idx, scale in head_masks.items():
-                        start_idx = head_idx * head_dim
-                        end_idx = (head_idx + 1) * head_dim
-                        scaling_factor[:, :, start_idx:end_idx] *= scale
+                        # Ensure hidden states have enough dimensions
+                        if len(hidden_states.shape) < 3:
+                            debug_log(
+                                f"Hidden states don't have enough dimensions: {hidden_states.shape}. Skipping inhibition.",
+                                is_important=True,
+                            )
+                            return output
 
-                    # Create a new output with modified hidden states
-                    output_list = list(output)
-                    output_list[0] = hidden_states * scaling_factor
-                    return tuple(output_list)
+                        # Apply scaling to hidden states directly for Mistral
+                        # This is an approximation since we're not directly modifying the attention weights
+                        scaling_factor = torch.ones_like(hidden_states)
+                        head_dim = hidden_states.shape[-1] // self.num_heads
 
-                # For LLaMA models, attention outputs contain attention probs at index 3
-                elif isinstance(output, tuple) and len(output) > 3:
-                    # Get attention weights
-                    attn_weights = output[3]
+                        for head_idx, scale in head_masks.items():
+                            # Check if head_idx is within valid range
+                            if head_idx >= self.num_heads or head_idx < 0:
+                                debug_log(
+                                    f"Layer {layer_idx}: Head index {head_idx} out of bounds (num_heads={self.num_heads}). Skipping this head.",
+                                    is_important=True,
+                                )
+                                continue
 
-                    debug_log(
-                        f"LLaMA attention format detected for layer {layer_idx}, attention weights shape: {attn_weights.shape}"
-                    )
+                            # Check if the calculated indices are valid
+                            start_idx = head_idx * head_dim
+                            end_idx = (head_idx + 1) * head_dim
 
-                    # Apply inhibition to specific heads
-                    for head_idx, scale_factor in head_masks.items():
-                        # Create a scaling tensor that's 1 except for the target head
-                        scaling = torch.ones_like(attn_weights)
-                        scaling[:, :, head_idx, :] = scale_factor
+                            if (
+                                start_idx >= hidden_states.shape[-1]
+                                or end_idx > hidden_states.shape[-1]
+                            ):
+                                debug_log(
+                                    f"Layer {layer_idx}, Head {head_idx}: Invalid head dimensions for hidden states shape {hidden_states.shape}. Skipping.",
+                                    is_important=True,
+                                )
+                                continue
 
-                        # Apply scaling
-                        new_weights = attn_weights * scaling
+                            scaling_factor[:, :, start_idx:end_idx] *= scale
 
-                        # Update the output tuple
+                        # Create a new output with modified hidden states
                         output_list = list(output)
-                        output_list[3] = new_weights
-                        # Return the modified output as a tuple
+                        output_list[0] = hidden_states * scaling_factor
                         return tuple(output_list)
 
-                    # If no modifications were made, return the original output
-                    return output
+                    # For LLaMA models, attention outputs contain attention probs at index 3
+                    elif isinstance(output, tuple) and len(output) > 3:
+                        try:
+                            # Get attention weights
+                            attn_weights = output[3]
 
-                # Fallback for other model architectures - may require model-specific adjustments
-                else:
+                            debug_log(
+                                f"LLaMA attention format detected for layer {layer_idx}, attention weights shape: {attn_weights.shape}"
+                            )
+
+                            # Check if attention weights have enough dimensions
+                            if len(attn_weights.shape) < 4:
+                                debug_log(
+                                    f"Layer {layer_idx}: Attention weights don't have enough dimensions: {attn_weights.shape}. Skipping inhibition.",
+                                    is_important=True,
+                                )
+                                return output
+
+                            # Apply inhibition to specific heads
+                            for head_idx, scale_factor in head_masks.items():
+                                # Check if head_idx is within valid range
+                                if head_idx >= attn_weights.shape[2] or head_idx < 0:
+                                    debug_log(
+                                        f"Layer {layer_idx}: Head index {head_idx} out of bounds for attention shape {attn_weights.shape}. Skipping this head.",
+                                        is_important=True,
+                                    )
+                                    continue
+
+                                # Create a scaling tensor that's 1 except for the target head
+                                scaling = torch.ones_like(attn_weights)
+                                scaling[:, :, head_idx, :] = scale_factor
+
+                                # Apply scaling
+                                new_weights = attn_weights * scaling
+
+                                # Update the output tuple
+                                output_list = list(output)
+                                output_list[3] = new_weights
+                                # Return the modified output as a tuple
+                                return tuple(output_list)
+
+                            # If no modifications were made, return the original output
+                            return output
+                        except IndexError as e:
+                            debug_log(
+                                f"IndexError in LLaMA attention format handling: {str(e)}. Returning original output.",
+                                is_important=True,
+                            )
+                            return output
+
+                    # Fallback for other model architectures - may require model-specific adjustments
+                    else:
+                        debug_log(
+                            f"Warning: Attention format not recognized for layer {layer_idx}. Output type: {type(output)}",
+                            is_important=True,
+                        )
+                        if isinstance(output, tuple):
+                            debug_log(f"Output tuple length: {len(output)}")
+                            # Print more details about the tuple elements
+                            for i, elem in enumerate(output):
+                                debug_log(
+                                    f"Element {i} type: {type(elem)}, shape: {getattr(elem, 'shape', 'No shape')}"
+                                )
+                        return cast(Optional[Tuple[Any, ...]], output)
+                except Exception as e:
+                    import traceback
+
                     debug_log(
-                        f"Warning: Attention format not recognized for layer {layer_idx}. Output type: {type(output)}",
+                        f"Error in inhibition hook for layer {layer_idx}: {str(e)}",
                         is_important=True,
                     )
-                    if isinstance(output, tuple):
-                        debug_log(f"Output tuple length: {len(output)}")
-                        # Print more details about the tuple elements
-                        for i, elem in enumerate(output):
-                            debug_log(
-                                f"Element {i} type: {type(elem)}, shape: {getattr(elem, 'shape', 'No shape')}"
-                            )
-                    return cast(Optional[Tuple[Any, ...]], output)
+                    debug_log(f"Stack trace: {traceback.format_exc()}", is_important=True)
+                    # Return original output in case of error to prevent generation from failing
+                    return output
 
             return hook
 
@@ -641,10 +707,28 @@ class InhibitedGenerator:
                 if isinstance(output, tuple) and len(output) > 3:
                     # For models with attention weights at index 3
                     attn_weights = output[3]
+
+                    # Debug the attention weights shape
                     debug_log(
                         f"Layer {layer_idx}, head {head_idx}: Attention weights shape: {attn_weights.shape}",
                         verbose=bool(verbose),
                     )
+
+                    # Check if attention weights have enough dimensions
+                    if len(attn_weights.shape) < 4:
+                        debug_log(
+                            f"Layer {layer_idx}, head {head_idx}: Attention weights don't have enough dimensions: {attn_weights.shape}. Skipping.",
+                            is_important=True,
+                        )
+                        return None
+
+                    # Check if head_idx is within the valid range for this tensor
+                    if head_idx >= attn_weights.shape[2]:
+                        debug_log(
+                            f"Layer {layer_idx}, head {head_idx}: Head index out of bounds for attention weights shape: {attn_weights.shape}. Skipping.",
+                            is_important=True,
+                        )
+                        return None
 
                     # Create a scaling tensor that's 1 except for the target head
                     scaling = torch.ones_like(attn_weights)
@@ -666,9 +750,61 @@ class InhibitedGenerator:
                     output_list[3] = new_weights
                     # Return the modified output as a tuple
                     return tuple(output_list)
+                elif isinstance(output, tuple) and len(output) == 2:
+                    # For Mistral-like models with different attention structure
+                    debug_log(
+                        f"Layer {layer_idx}, head {head_idx}: Using Mistral-style attention handling",
+                        verbose=bool(verbose),
+                    )
+
+                    # Get hidden states
+                    hidden_states = output[0]
+                    debug_log(
+                        f"Layer {layer_idx}, head {head_idx}: Hidden states shape: {hidden_states.shape}",
+                        verbose=bool(verbose),
+                    )
+
+                    # Check if we can safely apply inhibition
+                    if len(hidden_states.shape) < 3:
+                        debug_log(
+                            f"Layer {layer_idx}, head {head_idx}: Hidden states don't have enough dimensions: {hidden_states.shape}. Skipping.",
+                            is_important=True,
+                        )
+                        return None
+
+                    # Apply scaling to hidden states directly
+                    head_dim = hidden_states.shape[-1] // self.num_heads
+
+                    # Check if head_idx is within valid range
+                    if head_idx * head_dim >= hidden_states.shape[-1]:
+                        debug_log(
+                            f"Layer {layer_idx}, head {head_idx}: Head index out of bounds for hidden states. Skipping.",
+                            is_important=True,
+                        )
+                        return None
+
+                    # Create scaling factor tensor
+                    scaling_factor = torch.ones_like(hidden_states)
+                    start_idx = head_idx * head_dim
+                    end_idx = (head_idx + 1) * head_dim
+
+                    # Apply scaling only to the specific head's portion of hidden states
+                    scaling_factor[:, :, start_idx:end_idx] *= inhibition_factor
+
+                    # Apply scaling
+                    new_hidden_states = hidden_states * scaling_factor
+
+                    # Update the output tuple
+                    output_list = list(output)
+                    output_list[0] = new_hidden_states
+                    return tuple(output_list)
 
             # If we didn't make any changes, return None
             return None
         except Exception as e:
             debug_log(f"Error applying inhibition: {e}", is_important=True)
+            # Print stack trace for debugging
+            import traceback
+
+            debug_log(f"Stack trace: {traceback.format_exc()}", is_important=True)
             return None
