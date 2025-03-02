@@ -1,0 +1,251 @@
+{
+  "start_time": "2025-03-02T21:18:45.153109",
+  "articles_requested": 100,
+  "articles_fetched": 48,
+  "articles_with_content": 48,
+  "total_content_size": 146912,
+  "success_rate": 100.0,
+  "elapsed_time": 18.315598011016846,
+  "articles": [
+    {
+      "title": "United_States",
+      "size": 4397,
+      "status": "success"
+    },
+    {
+      "title": "World_War_II",
+      "size": 4258,
+      "status": "success"
+    },
+    {
+      "title": "Albert_Einstein",
+      "size": 3997,
+      "status": "success"
+    },
+    {
+      "title": "Climate_change",
+      "size": 3423,
+      "status": "success"
+    },
+    {
+      "title": "Artificial_intelligence",
+      "size": 2894,
+      "status": "success"
+    },
+    {
+      "title": "COVID-19_pandemic",
+      "size": 2743,
+      "status": "success"
+    },
+    {
+      "title": "Quantum_mechanics",
+      "size": 2263,
+      "status": "success"
+    },
+    {
+      "title": "World_Wide_Web",
+      "size": 2150,
+      "status": "success"
+    },
+    {
+      "title": "William_Shakespeare",
+      "size": 2736,
+      "status": "success"
+    },
+    {
+      "title": "Solar_System",
+      "size": 2214,
+      "status": "success"
+    },
+    {
+      "title": "Computer",
+      "size": 2917,
+      "status": "success"
+    },
+    {
+      "title": "Mathematics",
+      "size": 2655,
+      "status": "success"
+    },
+    {
+      "title": "Biology",
+      "size": 1609,
+      "status": "success"
+    },
+    {
+      "title": "History",
+      "size": 2152,
+      "status": "success"
+    },
+    {
+      "title": "Science",
+      "size": 3423,
+      "status": "success"
+    },
+    {
+      "title": "Technology",
+      "size": 1450,
+      "status": "success"
+    },
+    {
+      "title": "Art",
+      "size": 1350,
+      "status": "success"
+    },
+    {
+      "title": "Music",
+      "size": 2042,
+      "status": "success"
+    },
+    {
+      "title": "Film",
+      "size": 818,
+      "status": "success"
+    },
+    {
+      "title": "Literature",
+      "size": 1455,
+      "status": "success"
+    },
+    {
+      "title": "Psychology",
+      "size": 2465,
+      "status": "success"
+    },
+    {
+      "title": "Economics",
+      "size": 1541,
+      "status": "success"
+    },
+    {
+      "title": "Physics",
+      "size": 1492,
+      "status": "success"
+    },
+    {
+      "title": "China",
+      "size": 4900,
+      "status": "success"
+    },
+    {
+      "title": "India",
+      "size": 4472,
+      "status": "success"
+    },
+    {
+      "title": "Europe",
+      "size": 4256,
+      "status": "success"
+    },
+    {
+      "title": "Africa",
+      "size": 6219,
+      "status": "success"
+    },
+    {
+      "title": "Asia",
+      "size": 2948,
+      "status": "success"
+    },
+    {
+      "title": "North_America",
+      "size": 2856,
+      "status": "success"
+    },
+    {
+      "title": "South_America",
+      "size": 2765,
+      "status": "success"
+    },
+    {
+      "title": "Russia",
+      "size": 3882,
+      "status": "success"
+    },
+    {
+      "title": "Germany",
+      "size": 3042,
+      "status": "success"
+    },
+    {
+      "title": "United_Kingdom",
+      "size": 3951,
+      "status": "success"
+    },
+    {
+      "title": "France",
+      "size": 4261,
+      "status": "success"
+    },
+    {
+      "title": "Japan",
+      "size": 3349,
+      "status": "success"
+    },
+    {
+      "title": "Australia",
+      "size": 2812,
+      "status": "success"
+    },
+    {
+      "title": "Canada",
+      "size": 3113,
+      "status": "success"
+    },
+    {
+      "title": "Brazil",
+      "size": 3675,
+      "status": "success"
+    },
+    {
+      "title": "Mexico",
+      "size": 4415,
+      "status": "success"
+    },
+    {
+      "title": "Italy",
+      "size": 3262,
+      "status": "success"
+    },
+    {
+      "title": "Spain",
+      "size": 4589,
+      "status": "success"
+    },
+    {
+      "title": "Democracy",
+      "size": 3435,
+      "status": "success"
+    },
+    {
+      "title": "Capitalism",
+      "size": 2122,
+      "status": "success"
+    },
+    {
+      "title": "Socialism",
+      "size": 3634,
+      "status": "success"
+    },
+    {
+      "title": "Internet",
+      "size": 4085,
+      "status": "success"
+    },
+    {
+      "title": "Space_exploration",
+      "size": 3368,
+      "status": "success"
+    },
+    {
+      "title": "Genetics",
+      "size": 1984,
+      "status": "success"
+    },
+    {
+      "title": "Evolution",
+      "size": 3073,
+      "status": "success"
+    }
+  ]
+}
