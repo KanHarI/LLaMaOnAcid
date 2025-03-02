@@ -185,10 +185,23 @@ def save_query_outputs(
     Args:
         results: List of results dictionaries, each with query, inhibition_factor and response
         model_name: Name of the model for filenames
-        output_dir: Directory to save the outputs
+        output_dir: Directory to save the outputs (or full file path if it ends with .txt)
         suffix: Optional suffix for the output files
         save_individual_files: Whether to save individual files for each query (set to False for final outputs)
     """
+    # Add debug logging
+    print(
+        f"DEBUG: save_query_outputs called with: model_name={model_name}, output_dir={output_dir}"
+    )
+    print(f"DEBUG: results count: {len(results)}")
+
+    # Handle case where output_dir is actually a full file path
+    is_file_path = output_dir.endswith(".txt")
+    if is_file_path:
+        output_file = output_dir
+        output_dir = os.path.dirname(output_dir)
+        print(f"DEBUG: Detected file path, using dir: {output_dir}, file: {output_file}")
+
     if not results:
         print("Warning: No results to save.")
         # Create a directory if it doesn't exist
@@ -207,46 +220,85 @@ def save_query_outputs(
     # Create the output directory if it doesn't exist
     os.makedirs(output_dir, exist_ok=True)
 
+    # Check if directory is writeable
+    try:
+        if not os.access(output_dir, os.W_OK):
+            print(f"WARNING: Output directory {output_dir} is not writeable!")
+            # Try to get details of the directory
+            import stat
+
+            dir_stat = os.stat(output_dir)
+            print(f"DEBUG: Directory permissions: {stat.filemode(dir_stat.st_mode)}")
+            print(f"DEBUG: Directory owner: {dir_stat.st_uid}, group: {dir_stat.st_gid}")
+    except Exception as e:
+        print(f"DEBUG: Error checking directory permissions: {e}")
+
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 
     try:
         # Create a combined summary file
         model_name_safe = model_name.replace("/", "-").replace(".", "-")
-        output_file = os.path.join(output_dir, f"{model_name_safe}_all_outputs{suffix}.txt")
+        if not is_file_path:
+            output_file = os.path.join(output_dir, f"{model_name_safe}_all_outputs{suffix}.txt")
 
-        with open(output_file, "w") as f:
-            f.write(f"Experiment results for {model_name}\n")
-            f.write(f"Timestamp: {timestamp}\n")
-            f.write(f"{commit_info}\n")
-            f.write("=" * 80 + "\n\n")
+        print(f"DEBUG: Writing results to output file: {output_file}")
 
-            # Group results by query
-            query_results: Dict[str, List[Dict[str, Any]]] = {}
-            for result in results:
-                query = result.get("query", "Unknown query")
-                if query not in query_results:
-                    query_results[query] = []
-                query_results[query].append(result)
-
-            # Write results for each query
-            for query, query_list in query_results.items():
-                f.write(f"QUERY: {query}\n")
-                f.write("-" * 80 + "\n\n")
-
-                # Sort by inhibition factor
-                query_list.sort(key=lambda x: x.get("inhibition_factor", 0.0))
-
-                for result in query_list:
-                    factor = result.get("inhibition_factor", 0.0)
-                    response = result.get("response", "No response generated")
-
-                    f.write(f"INHIBITION FACTOR: {factor}\n\n")
-                    f.write(f"RESPONSE:\n{response}\n\n")
-                    f.write("-" * 40 + "\n\n")
-
+        try:
+            with open(output_file, "w") as f:
+                f.write(f"Experiment results for {model_name}\n")
+                f.write(f"Timestamp: {timestamp}\n")
+                f.write(f"{commit_info}\n")
                 f.write("=" * 80 + "\n\n")
 
-        print(f"Saved combined outputs to {output_file}")
+                # Group results by query
+                query_results: Dict[str, List[Dict[str, Any]]] = {}
+                for result in results:
+                    query = result.get("query", "Unknown query")
+                    if query not in query_results:
+                        query_results[query] = []
+                    query_results[query].append(result)
+
+                # Write results for each query
+                for query, query_list in query_results.items():
+                    f.write(f"QUERY: {query}\n")
+                    f.write("-" * 80 + "\n\n")
+
+                    # Sort by inhibition factor
+                    query_list.sort(key=lambda x: x.get("inhibition_factor", 0.0))
+
+                    for result in query_list:
+                        factor = result.get("inhibition_factor", 0.0)
+                        response = result.get("response", "No response generated")
+
+                        f.write(f"INHIBITION FACTOR: {factor}\n\n")
+                        f.write(f"RESPONSE:\n{response}\n\n")
+                        f.write("-" * 40 + "\n\n")
+
+                    f.write("=" * 80 + "\n\n")
+
+            # Check if the file was actually created
+            if os.path.exists(output_file):
+                print(f"Saved combined outputs to {output_file}")
+                file_size = os.path.getsize(output_file)
+                print(f"DEBUG: Output file size: {file_size} bytes")
+            else:
+                print(
+                    f"ERROR: Failed to create output file {output_file} even though no exception was raised"
+                )
+
+        except IOError as e:
+            print(f"ERROR: Could not write to file {output_file}: {e}")
+            # Try to get more information about the error
+            import errno
+
+            if hasattr(e, "errno"):
+                if e.errno == errno.EACCES:
+                    print("Permission denied - check file permissions")
+                elif e.errno == errno.ENOSPC:
+                    print("No space left on device")
+                else:
+                    print(f"IO Error code: {e.errno}")
+            raise
 
         # Create individual files for each query only if requested
         if save_individual_files:

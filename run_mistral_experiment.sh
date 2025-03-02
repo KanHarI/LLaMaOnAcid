@@ -19,6 +19,7 @@ Options:
   -t, --max-tokens N        Maximum tokens to generate (default: uses run_experiment.py defaults)
   -g, --gamma N             Gamma decay factor for inhibition (default: 0.95)
   --flash-attn              Install flash-attention for better performance (recommended for CUDA systems)
+  --debug                   Enable verbose debug logging
 
 Examples:
   # Run with default settings
@@ -58,10 +59,11 @@ MODEL_NAME="mistralai/Mistral-7B-v0.1"
 OUTPUT_DIR="mistral_experiment_$(date +"%Y%m%d_%H%M%S")"
 DMN_FILE="dmn_heads_mistral-7b-v0.1.json"
 CUSTOM_QUERIES=()
-FACTORS=()
+FACTORS=(0.0 0.5 0.8)
 MAX_TOKENS=""
 GAMMA=0.95
 INSTALL_FLASH_ATTN=false
+DEBUG=false
 
 # Parse command-line arguments
 while [[ $# -gt 0 ]]; do
@@ -87,6 +89,7 @@ while [[ $# -gt 0 ]]; do
             ;;
         -f|--factors)
             shift
+            FACTORS=()
             while [[ $# -gt 0 && "$1" =~ ^[0-9.]+$ ]]; do
                 FACTORS+=("$1")
                 shift
@@ -102,6 +105,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --flash-attn)
             INSTALL_FLASH_ATTN=true
+            shift
+            ;;
+        --debug)
+            DEBUG=true
             shift
             ;;
         *)
@@ -176,12 +183,18 @@ if [ ! -z "$MAX_TOKENS" ]; then
     CMD="$CMD --max-tokens $MAX_TOKENS"
 fi
 
+# Add debug flag if specified
+if [ "$DEBUG" = true ]; then
+    CMD="$CMD --verbose-logging"
+fi
+
 # Add queries with proper quoting
 for query in "${QUERIES[@]}"; do
     CMD="$CMD --queries \"$query\""
 done
 
 # Run the experiment
+echo "Running command: $CMD"
 eval $CMD
 
 echo -e "\n✅ Experiment completed!"

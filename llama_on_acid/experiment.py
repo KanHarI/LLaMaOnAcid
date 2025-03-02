@@ -6,14 +6,17 @@ Main experiment module for running Default Mode Network inhibition.
 import json
 import os
 import pickle
+import random
+import time
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple, Union
 
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import torch
 from tqdm import tqdm
-from transformers import AutoModelForCausalLM, AutoTokenizer
+from transformers import AutoModelForCausalLM, AutoTokenizer, PreTrainedModel, PreTrainedTokenizer
 
 from .config import (
     CACHE_DIR,
@@ -31,6 +34,7 @@ from .data.processor import prepare_text_chunks
 from .data.wikipedia import fetch_top_wikipedia_articles
 from .model.dmn_identifier import DefaultModeNetworkIdentifier
 from .model.inhibited_generator import InhibitedGenerator
+from .utils import get_git_commit_hash
 from .visualization.visualizer import (
     analyze_results,
     save_query_outputs,
@@ -571,9 +575,45 @@ class DefaultModeNetworkExperiment:
                             output_dir,
                             f"query_{query_idx+1}_{query_safe}_factor_{factor_str}_gamma_{gamma:.2f}.txt",
                         )
+
+                        # Add debug logging
+                        debug_log(f"Attempting to save output to: {output_path}", is_important=True)
+                        debug_log(
+                            f"Output directory exists: {os.path.exists(output_dir)}",
+                            is_important=True,
+                        )
+
+                        # No need to import again - already imported at the top
                         # Convert the single result to a list for save_query_outputs
-                        save_query_outputs([result], output_path)
-                        print(f"    Saved intermediate result to {output_path}")
+                        try:
+                            # Fix the function call to match the expected parameters
+                            save_query_outputs(
+                                results=[result],
+                                model_name=self.model_name,
+                                output_dir=os.path.dirname(output_path),
+                                suffix=os.path.basename(output_path).replace(
+                                    f"{self.model_name}_all_outputs", ""
+                                ),
+                                save_individual_files=False,
+                            )
+                            debug_log("Successfully called save_query_outputs", is_important=True)
+                            # Check if the file was actually created
+                            output_file = os.path.join(
+                                os.path.dirname(output_path),
+                                f"{self.model_name.replace('/', '-').replace('.', '-')}_all_outputs.txt",
+                            )
+                            debug_log(f"Expected output file: {output_file}", is_important=True)
+                            debug_log(
+                                f"Output file exists: {os.path.exists(output_file)}",
+                                is_important=True,
+                            )
+                            print(f"    Saved intermediate result to {output_path}")
+                        except Exception as e:
+                            debug_log(f"Error in save_query_outputs: {e}", is_important=True)
+                            import traceback
+
+                            debug_log(f"Traceback: {traceback.format_exc()}", is_important=True)
+                            print(f"    Error saving to {output_path}: {e}")
 
                 except Exception as e:
                     print(f"Error generating for query {query_idx+1} with factor {factor}: {e}")
