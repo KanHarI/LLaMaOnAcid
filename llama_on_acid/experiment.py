@@ -37,11 +37,14 @@ from .visualization.visualizer import (
     visualize_default_mode_network,
 )
 
+
 # Add debug logging function
-def debug_log(msg: str, is_important: bool = False, divider: bool = False, verbose: bool = False) -> None:
+def debug_log(
+    msg: str, is_important: bool = False, divider: bool = False, verbose: bool = False
+) -> None:
     """
     Helper function to print consistent debug logs with timestamps.
-    
+
     Args:
         msg: Message to log
         is_important: Whether the message is important (will be highlighted)
@@ -51,7 +54,7 @@ def debug_log(msg: str, is_important: bool = False, divider: bool = False, verbo
     # Skip non-important, verbose logs unless verbose is enabled
     if not is_important and not verbose:
         return
-        
+
     timestamp = datetime.now().strftime("%H:%M:%S.%f")[:-3]
     if divider:
         print(f"\n{'=' * 80}")
@@ -82,7 +85,11 @@ class DefaultModeNetworkExperiment:
             device: The device to use (cuda or cpu)
             cache_dir: Directory to store cached data
         """
-        debug_log("INIT: Starting DefaultModeNetworkExperiment initialization", is_important=True, divider=True)
+        debug_log(
+            "INIT: Starting DefaultModeNetworkExperiment initialization",
+            is_important=True,
+            divider=True,
+        )
         self.model_name = model_name
         print(f"Initializing experiment with model: {model_name}")
 
@@ -156,7 +163,9 @@ class DefaultModeNetworkExperiment:
 
         # Initialize DMN identifier
         debug_log("Initializing DMN identifier...", is_important=True)
-        self.dmn_identifier = DefaultModeNetworkIdentifier(self.model, device=self.device, model_name=self.model_name)
+        self.dmn_identifier = DefaultModeNetworkIdentifier(
+            self.model, device=self.device, model_name=self.model_name
+        )
         debug_log("DMN identifier initialized successfully", verbose=False)
 
         # Initialize generator with proper type annotation
@@ -177,7 +186,10 @@ class DefaultModeNetworkExperiment:
         Returns:
             List of article titles
         """
-        debug_log(f"FETCH_ARTICLES: Fetching top {n} Wikipedia articles (cache={use_cache}, force_refresh={force_refresh})", is_important=True)
+        debug_log(
+            f"FETCH_ARTICLES: Fetching top {n} Wikipedia articles (cache={use_cache}, force_refresh={force_refresh})",
+            is_important=True,
+        )
         self.articles = fetch_top_wikipedia_articles(
             n=n,
             use_cache=use_cache,
@@ -201,7 +213,10 @@ class DefaultModeNetworkExperiment:
         Returns:
             List of text chunks
         """
-        debug_log(f"PREPARE_CHUNKS: Preparing text chunks (chunk_size={chunk_size}, use_cache={use_cache})", is_important=True)
+        debug_log(
+            f"PREPARE_CHUNKS: Preparing text chunks (chunk_size={chunk_size}, use_cache={use_cache})",
+            is_important=True,
+        )
         if not self.articles:
             debug_log("No articles loaded. Fetching top Wikipedia articles first...", verbose=False)
             print("No articles loaded. Fetching top Wikipedia articles first...")
@@ -215,7 +230,7 @@ class DefaultModeNetworkExperiment:
             cache_dir=self.cache_dir,
             model_name=self.model_name,
         )
-        
+
         debug_log(f"Prepared {len(self.processed_chunks)} text chunks", verbose=False)
         return self.processed_chunks
 
@@ -229,13 +244,20 @@ class DefaultModeNetworkExperiment:
             sample_size: Number of chunks to process
             use_cache: Whether to use cached activations if available
         """
-        debug_log(f"IDENTIFY_DMN: Starting DMN identification (sample_size={sample_size}, use_cache={use_cache})", is_important=True, divider=True)
+        debug_log(
+            f"IDENTIFY_DMN: Starting DMN identification (sample_size={sample_size}, use_cache={use_cache})",
+            is_important=True,
+            divider=True,
+        )
         if not self.processed_chunks:
             debug_log("No text chunks prepared. Preparing chunks first...", verbose=False)
             print("No text chunks prepared. Preparing chunks first...")
             self.prepare_text_chunks()
-        
-        debug_log(f"Using {min(sample_size, len(self.processed_chunks))} chunks for DMN identification", verbose=False)
+
+        debug_log(
+            f"Using {min(sample_size, len(self.processed_chunks))} chunks for DMN identification",
+            verbose=False,
+        )
         self.dmn_identifier.identify_default_mode_network(
             chunks=self.processed_chunks,
             tokenizer=self.tokenizer,
@@ -259,18 +281,21 @@ class DefaultModeNetworkExperiment:
         # Use configuration value if not provided
         if top_n_per_layer is None:
             top_n_per_layer = DMN_CONFIG["top_n_per_layer"]
-            
+
         verbose = DMN_CONFIG["verbose_logging"]
-        debug_log(f"Selecting top {top_n_per_layer} default mode heads per layer", 
-                is_important=True, verbose=verbose)
-        
+        debug_log(
+            f"Selecting top {top_n_per_layer} default mode heads per layer",
+            is_important=True,
+            verbose=verbose,
+        )
+
         if not hasattr(self, "dmn_identifier") or not self.dmn_identifier:
             raise ValueError("Must run identify_default_mode_network() first")
-        
+
         self.top_default_mode_heads = self.dmn_identifier.select_top_default_mode_heads(
             top_n_per_layer=top_n_per_layer
         )
-        
+
         return self.top_default_mode_heads
 
     def save_default_mode_network(self, filepath: str) -> None:
@@ -306,8 +331,11 @@ class DefaultModeNetworkExperiment:
 
         assert self.model is not None, "Model must be initialized"
         assert self.tokenizer is not None, "Tokenizer must be initialized"
-        
-        debug_log(f"Creating generator with {len(self.dmn_identifier.top_default_mode_heads)} DMN heads", verbose=False)
+
+        debug_log(
+            f"Creating generator with {len(self.dmn_identifier.top_default_mode_heads)} DMN heads",
+            verbose=False,
+        )
         try:
             self.generator = InhibitedGenerator(
                 model=self.model,
@@ -345,19 +373,25 @@ class DefaultModeNetworkExperiment:
         Returns:
             Tuple of (normal_output, inhibited_output)
         """
-        debug_log(f"GENERATE: Starting generation with inhibition factor {inhibition_factor}, gamma {gamma}", is_important=True)
-        
+        debug_log(
+            f"GENERATE: Starting generation with inhibition factor {inhibition_factor}, gamma {gamma}",
+            is_important=True,
+        )
+
         # Initialize generator if not already done
         if self.generator is None:
             self._initialize_generator()
-            
+
         if self.generator is None:
-            error_msg = "Generator could not be initialized. DMN must be identified or loaded first."
+            error_msg = (
+                "Generator could not be initialized. DMN must be identified or loaded first."
+            )
             debug_log(error_msg, is_important=True)
             raise ValueError(error_msg)
 
         # Set logging level for transformers
         import logging
+
         logging.getLogger("transformers").setLevel(logging.ERROR)
 
         # Generate text
@@ -429,35 +463,54 @@ class DefaultModeNetworkExperiment:
         Returns:
             List of experiment results
         """
-        debug_log(f"RUN_EXPERIMENT: Starting experiment with {len(queries)} queries and {len(inhibition_factors)} inhibition factors", is_important=True, divider=True)
-        debug_log(f"Parameters: gamma={gamma}, max_tokens={max_new_tokens}, output_dir={output_dir}")
-        
+        debug_log(
+            f"RUN_EXPERIMENT: Starting experiment with {len(queries)} queries and {len(inhibition_factors)} inhibition factors",
+            is_important=True,
+            divider=True,
+        )
+        debug_log(
+            f"Parameters: gamma={gamma}, max_tokens={max_new_tokens}, output_dir={output_dir}"
+        )
+
         # Create output directory if it doesn't exist
         os.makedirs(output_dir, exist_ok=True)
-        
+
         # Initialize DMN identification if not already done
         if dmn_file and os.path.exists(dmn_file):
             debug_log(f"Loading DMN from file: {dmn_file}", is_important=True)
             self.load_default_mode_network(dmn_file)
-        elif not hasattr(self.dmn_identifier, "top_default_mode_heads") or not self.dmn_identifier.top_default_mode_heads:
-            debug_log("DMN not identified yet. Running identification process...", is_important=True)
+        elif (
+            not hasattr(self.dmn_identifier, "top_default_mode_heads")
+            or not self.dmn_identifier.top_default_mode_heads
+        ):
+            debug_log(
+                "DMN not identified yet. Running identification process...", is_important=True
+            )
             print("Identifying default mode network...")
             self.fetch_top_wikipedia_articles(n=n_chunks, force_refresh=force_article_refresh)
             self.prepare_text_chunks(use_cache=use_cache)
             self.identify_default_mode_network(sample_size=n_chunks, use_cache=use_cache)
             self.select_top_default_mode_heads(top_n_per_layer=top_n_per_layer)
-            
+
             # Save the identified DMN to the output directory
             dmn_file = os.path.join(output_dir, "dmn_heads.pkl")
             print(f"Saving identified DMN to: {dmn_file}")
             self.save_default_mode_network(dmn_file)
-            
+
             # Also save as JSON for easier inspection
             dmn_json_file = os.path.join(output_dir, "dmn_heads.json")
             try:
                 with open(dmn_json_file, "w") as f:
                     import json
-                    json.dump([{"layer": l, "head": h, "score": float(s)} for l, h, s in self.dmn_identifier.top_default_mode_heads], f, indent=2)
+
+                    json.dump(
+                        [
+                            {"layer": l, "head": h, "score": float(s)}
+                            for l, h, s in self.dmn_identifier.top_default_mode_heads
+                        ],
+                        f,
+                        indent=2,
+                    )
                 print(f"Saved DMN as JSON to: {dmn_json_file}")
             except Exception as e:
                 print(f"Error saving DMN JSON: {e}")
@@ -467,18 +520,18 @@ class DefaultModeNetworkExperiment:
         for i, (layer, head, score) in enumerate(self.dmn_identifier.top_default_mode_heads[:10]):
             print(f"#{i+1}: Layer {layer}, Head {head}, Score {score:.4f}")
         print("\n")
-        
+
         # Initialize results store
         results = []
-        
+
         # Run the experiment for each query and inhibition factor
         for query_idx, query in enumerate(queries):
             print(f"\nQuery {query_idx+1}/{len(queries)}: {query}")
             query_results = []
-            
+
             for factor_idx, factor in enumerate(inhibition_factors):
                 print(f"  Inhibition factor: {factor}, Gamma: {gamma}")
-                
+
                 try:
                     normal_output, inhibited_output = self.generate_with_inhibition(
                         prompt=query,
@@ -486,7 +539,7 @@ class DefaultModeNetworkExperiment:
                         gamma=gamma,
                         max_new_tokens=max_new_tokens,
                     )
-                    
+
                     result = {
                         "query": query,
                         "query_idx": query_idx,
@@ -496,48 +549,55 @@ class DefaultModeNetworkExperiment:
                         "inhibited_output": inhibited_output,
                         "timestamp": datetime.now().isoformat(),
                     }
-                    
+
                     # Calculate simple metrics
                     normal_tokens = len(self.tokenizer.encode(normal_output))
                     inhibited_tokens = len(self.tokenizer.encode(inhibited_output))
                     result["normal_token_count"] = normal_tokens
                     result["inhibited_token_count"] = inhibited_tokens
-                    
+
                     # Save result
                     query_results.append(result)
                     results.append(result)
-                    
+
                     # Save intermediate visualization for this query and inhibition factor
                     if save_intermediate:
                         query_safe = query.replace(" ", "_")[:30].replace("?", "").replace("/", "_")
                         factor_str = f"{factor:.1f}"
-                        output_path = os.path.join(output_dir, f"query_{query_idx+1}_{query_safe}_factor_{factor_str}_gamma_{gamma:.2f}.txt")
+                        output_path = os.path.join(
+                            output_dir,
+                            f"query_{query_idx+1}_{query_safe}_factor_{factor_str}_gamma_{gamma:.2f}.txt",
+                        )
                         save_query_outputs(result, output_path)
                         print(f"    Saved intermediate result to {output_path}")
-                    
+
                 except Exception as e:
                     print(f"Error generating for query {query_idx+1} with factor {factor}: {e}")
                     debug_log(f"Error: {e}", is_important=True)
                     # Add error result
-                    results.append({
-                        "query": query,
-                        "query_idx": query_idx,
-                        "inhibition_factor": factor,
-                        "gamma": gamma,
-                        "error": str(e),
-                        "timestamp": datetime.now().isoformat(),
-                    })
-            
+                    results.append(
+                        {
+                            "query": query,
+                            "query_idx": query_idx,
+                            "inhibition_factor": factor,
+                            "gamma": gamma,
+                            "error": str(e),
+                            "timestamp": datetime.now().isoformat(),
+                        }
+                    )
+
             # Generate query-level visualization
             if save_intermediate and len(query_results) > 0:
                 query_safe = query.replace(" ", "_")[:30].replace("?", "").replace("/", "_")
-                save_path = os.path.join(output_dir, f"query_{query_idx+1}_{query_safe}_summary.png")
+                save_path = os.path.join(
+                    output_dir, f"query_{query_idx+1}_{query_safe}_summary.png"
+                )
                 try:
                     analyze_results(query_results, save_path=save_path)
                     print(f"  Saved query analysis to {save_path}")
                 except Exception as e:
                     print(f"  Error saving query analysis: {e}")
-        
+
         debug_log(f"Experiment complete with {len(results)} total data points", is_important=True)
         return results
 

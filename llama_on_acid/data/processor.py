@@ -39,7 +39,9 @@ def prepare_text_chunks(
     Returns:
         List of text chunks
     """
-    print(f"[CHUNKS] Preparing text chunks from {len(articles)} Wikipedia articles (chunk_size={chunk_size}, min_tokens={min_chunk_tokens})...")
+    print(
+        f"[CHUNKS] Preparing text chunks from {len(articles)} Wikipedia articles (chunk_size={chunk_size}, min_tokens={min_chunk_tokens})..."
+    )
 
     # Create cache directory
     wiki_cache_dir = os.path.join(cache_dir or CACHE_DIR, model_name.replace("/", "_"))
@@ -60,14 +62,20 @@ def prepare_text_chunks(
             if "chunks" in cached_data and "articles" in cached_data:
                 cached_articles = set(cached_data["articles"])
                 current_articles = set(articles)
-                
-                print(f"[CHUNKS] Cached articles: {len(cached_articles)}, Current articles: {len(current_articles)}")
-                print(f"[CHUNKS] Articles overlap: {len(cached_articles.intersection(current_articles))}")
+
+                print(
+                    f"[CHUNKS] Cached articles: {len(cached_articles)}, Current articles: {len(current_articles)}"
+                )
+                print(
+                    f"[CHUNKS] Articles overlap: {len(cached_articles.intersection(current_articles))}"
+                )
 
                 # If the cached chunks were generated from the same or a superset of current articles
                 if current_articles.issubset(cached_articles):
                     chunks = cached_data["chunks"]
-                    print(f"[CHUNKS] HIT: Using {len(chunks)} cached chunks from {len(cached_articles)} articles")
+                    print(
+                        f"[CHUNKS] HIT: Using {len(chunks)} cached chunks from {len(cached_articles)} articles"
+                    )
                     if chunks:
                         print(f"[CHUNKS] Sample chunk: {chunks[0][:100]}...")
                     return chunks
@@ -89,7 +97,7 @@ def prepare_text_chunks(
     for i, article_title in enumerate(tqdm(articles)):
         try:
             print(f"[CHUNKS] Processing article {i+1}/{len(articles)}: '{article_title}'")
-            
+
             # Use our cache-aware fetch_article_content method
             content = fetch_article_content(
                 article_title, use_cache=use_cache, cache_dir=cache_dir, model_name=model_name
@@ -97,7 +105,9 @@ def prepare_text_chunks(
 
             # Skip if content is empty
             if not content or len(content.strip()) < 100:  # Skip very short content
-                print(f"[CHUNKS] SKIP: Article '{article_title}' has insufficient content ({len(content) if content else 0} chars)")
+                print(
+                    f"[CHUNKS] SKIP: Article '{article_title}' has insufficient content ({len(content) if content else 0} chars)"
+                )
                 continue
 
             # Tokenize the content
@@ -107,7 +117,7 @@ def prepare_text_chunks(
             # Split into chunks
             article_has_valid_chunks = False
             article_chunks = 0
-            
+
             for j in range(0, len(tokens), chunk_size):
                 if i + chunk_size < len(tokens):
                     chunk_tokens = tokens[j : j + chunk_size]
@@ -120,7 +130,7 @@ def prepare_text_chunks(
                         article_has_valid_chunks = True
 
             print(f"[CHUNKS] Created {article_chunks} chunks from article '{article_title}'")
-            
+
             # Only record this article as processed if it contributed valid chunks
             if article_has_valid_chunks:
                 processed_articles.append(article_title)
@@ -130,6 +140,7 @@ def prepare_text_chunks(
 
             # Sleep to avoid rate limiting
             import time
+
             time.sleep(0.5)
 
         except Exception as e:
@@ -139,7 +150,9 @@ def prepare_text_chunks(
     # Cache the chunks if we have any
     if chunks:
         try:
-            print(f"[CHUNKS] Caching {len(chunks)} chunks from {len(processed_articles)} articles...")
+            print(
+                f"[CHUNKS] Caching {len(chunks)} chunks from {len(processed_articles)} articles..."
+            )
             cache_data = {
                 "timestamp": datetime.now().isoformat(),
                 "chunk_size": chunk_size,
@@ -148,7 +161,9 @@ def prepare_text_chunks(
             }
             with open(chunks_cache_file, "wb") as f:
                 pickle.dump(cache_data, f)
-            print(f"[CHUNKS] CACHED: Successfully cached {len(chunks)} processed chunks from {len(processed_articles)} articles")
+            print(
+                f"[CHUNKS] CACHED: Successfully cached {len(chunks)} processed chunks from {len(processed_articles)} articles"
+            )
         except Exception as e:
             print(f"[CHUNKS] ERROR: Error caching processed chunks: {e}")
 
@@ -164,8 +179,8 @@ def prepare_text_chunks(
     # Shuffle the chunks
     random.shuffle(chunks)
     print(f"[CHUNKS] DONE: Prepared and shuffled {len(chunks)} text chunks")
-    
+
     if chunks:
         print(f"[CHUNKS] Sample chunk: {chunks[0][:100]}...")
-    
+
     return chunks

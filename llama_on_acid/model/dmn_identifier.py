@@ -5,7 +5,7 @@ Module for identifying the default mode network in language models.
 import os
 import pickle
 from datetime import datetime
-from typing import Any, Callable, Dict, List, Optional, Set, Tuple, Counter, TypeVar, Union
+from typing import Any, Callable, Counter, Dict, List, Optional, Set, Tuple, TypeVar, Union
 
 import torch
 from tqdm import tqdm
@@ -18,10 +18,12 @@ HeadImportanceScore = List[Tuple[int, int, float]]
 
 
 # Add debug logging function for consistency across modules
-def debug_log(msg: str, is_important: bool = False, divider: bool = False, verbose: bool = False) -> None:
+def debug_log(
+    msg: str, is_important: bool = False, divider: bool = False, verbose: bool = False
+) -> None:
     """
     Helper function to print consistent debug logs with timestamps.
-    
+
     Args:
         msg: Message to log
         is_important: Whether the message is important (will be highlighted)
@@ -31,7 +33,7 @@ def debug_log(msg: str, is_important: bool = False, divider: bool = False, verbo
     # Skip non-important, verbose logs unless verbose is enabled
     if not is_important and not verbose:
         return
-        
+
     timestamp = datetime.now().strftime("%H:%M:%S.%f")[:-3]
     if divider:
         print(f"\n{'=' * 80}")
@@ -67,7 +69,7 @@ class DefaultModeNetworkIdentifier:
         """
         debug_log("Initializing DefaultModeNetworkIdentifier", is_important=True, divider=True)
         debug_log(f"Model: {model_name}, Device: {device}")
-        
+
         self.model = model
         self.device = device
         self.model_name = model_name
@@ -105,8 +107,11 @@ class DefaultModeNetworkIdentifier:
         self.default_mode_activations: ActivationDict = {}
         self.head_importance_scores: HeadImportanceScore = []
         self.top_default_mode_heads: HeadImportanceScore = []
-        
-        debug_log(f"DMN identifier initialized for model with {self.num_layers} layers and {self.num_heads} heads per layer", is_important=True)
+
+        debug_log(
+            f"DMN identifier initialized for model with {self.num_layers} layers and {self.num_heads} heads per layer",
+            is_important=True,
+        )
 
     def register_attention_hooks(self) -> List[torch.utils.hooks.RemovableHandle]:
         """
@@ -125,15 +130,15 @@ class DefaultModeNetworkIdentifier:
                     # For Mistral models, we don't have direct access to attention weights
                     # We'll use a proxy based on the hidden states
                     hidden_states = output[0]  # First element is hidden states
-                    
+
                     # Extract a proxy for attention based on the activation of this head
                     head_dim = hidden_states.shape[-1] // self.num_heads
                     start_idx = head_idx * head_dim
                     end_idx = (head_idx + 1) * head_dim
-                    
+
                     # Use the mean activation of this head's hidden states as a proxy
                     head_activation = hidden_states[:, :, start_idx:end_idx].abs().mean().item()
-                    
+
                     # Store the activation
                     if layer_idx not in self.default_mode_activations:
                         self.default_mode_activations[layer_idx] = {}
@@ -142,7 +147,7 @@ class DefaultModeNetworkIdentifier:
                         self.default_mode_activations[layer_idx][head_idx] = []
 
                     self.default_mode_activations[layer_idx][head_idx].append(head_activation)
-                    
+
                 # For LLaMA models, attention outputs contain attention probs at index 3
                 elif isinstance(output, tuple) and len(output) > 3:
                     # Get attention weights
@@ -162,62 +167,88 @@ class DefaultModeNetworkIdentifier:
                         self.default_mode_activations[layer_idx][head_idx] = []
 
                     self.default_mode_activations[layer_idx][head_idx].append(activation)
-                
+
                 # If we don't recognize the attention format, log it
                 else:
                     if not hasattr(self, "_warned_about_format"):
-                        debug_log(f"Unrecognized attention format for layer {layer_idx}", is_important=True)
+                        debug_log(
+                            f"Unrecognized attention format for layer {layer_idx}",
+                            is_important=True,
+                        )
                         debug_log(f"Output type: {type(output)}")
                         if isinstance(output, tuple):
                             debug_log(f"Output tuple length: {len(output)}")
                             # Print more details about the tuple elements
                             for i, elem in enumerate(output):
-                                debug_log(f"Element {i} type: {type(elem)}, shape: {getattr(elem, 'shape', 'No shape')}")
+                                debug_log(
+                                    f"Element {i} type: {type(elem)}, shape: {getattr(elem, 'shape', 'No shape')}"
+                                )
                         self._warned_about_format = True
 
             return hook
 
         # Register hooks for each attention layer and head
-        debug_log(f"Registering hooks for {self.num_layers} layers with {self.num_heads} heads each", is_important=True)
+        debug_log(
+            f"Registering hooks for {self.num_layers} layers with {self.num_heads} heads each",
+            is_important=True,
+        )
         registered_count = 0
         error_count = 0
-        
+
         for layer_idx in range(self.num_layers):
             try:
                 # Access the correct attention module based on the model architecture
                 if hasattr(self.model, "model") and hasattr(self.model.model, "layers"):
                     # For LLaMA/Mistral models
                     attn_module = self.model.model.layers[layer_idx].self_attn
-                    debug_log(f"Layer {layer_idx}: Found LLaMA/Mistral style attention module", verbose=False)
+                    debug_log(
+                        f"Layer {layer_idx}: Found LLaMA/Mistral style attention module",
+                        verbose=False,
+                    )
                 elif hasattr(self.model, "h"):
                     # For other architectures like GPT-2
                     attn_module = self.model.h[layer_idx].attn
-                    debug_log(f"Layer {layer_idx}: Found GPT-2 style attention module", verbose=False)
+                    debug_log(
+                        f"Layer {layer_idx}: Found GPT-2 style attention module", verbose=False
+                    )
                 else:
-                    debug_log(f"Layer {layer_idx}: Could not find attention module", is_important=True)
+                    debug_log(
+                        f"Layer {layer_idx}: Could not find attention module", is_important=True
+                    )
                     error_count += 1
                     continue
 
                 # Log the attention module type and properties
-                debug_log(f"Layer {layer_idx} attention module: {type(attn_module).__name__}", verbose=False)
-                
+                debug_log(
+                    f"Layer {layer_idx} attention module: {type(attn_module).__name__}",
+                    verbose=False,
+                )
+
                 # Check for flash attention
                 has_flash = hasattr(attn_module, "flash_attn") and attn_module.flash_attn
                 if has_flash:
                     debug_log(f"Layer {layer_idx} uses flash attention", verbose=False)
-                
+
                 # Register hooks for each head in this layer
                 for head_idx in range(self.num_heads):
                     try:
-                        hook = attn_module.register_forward_hook(get_attention_hook(layer_idx, head_idx))
+                        hook = attn_module.register_forward_hook(
+                            get_attention_hook(layer_idx, head_idx)
+                        )
                         hooks.append(hook)
                         registered_count += 1
                     except Exception as e:
-                        debug_log(f"Error registering hook for layer {layer_idx}, head {head_idx}: {e}", is_important=True)
+                        debug_log(
+                            f"Error registering hook for layer {layer_idx}, head {head_idx}: {e}",
+                            is_important=True,
+                        )
                         error_count += 1
-            
+
             except Exception as e:
-                debug_log(f"Error accessing attention module for layer {layer_idx}: {e}", is_important=True)
+                debug_log(
+                    f"Error accessing attention module for layer {layer_idx}: {e}",
+                    is_important=True,
+                )
                 error_count += 1
 
         debug_log(f"Registered {registered_count} hooks successfully with {error_count} errors")
@@ -235,7 +266,9 @@ class DefaultModeNetworkIdentifier:
             sample_size: Number of chunks to process
             use_cache: Whether to use cached activations if available
         """
-        debug_log("Starting DMN identification from text chunks...", is_important=True, divider=True)
+        debug_log(
+            "Starting DMN identification from text chunks...", is_important=True, divider=True
+        )
         debug_log(f"Parameters: sample_size={sample_size}, use_cache={use_cache}")
 
         # Check if we have previously processed activations in cache
@@ -247,16 +280,21 @@ class DefaultModeNetworkIdentifier:
             try:
                 debug_log(f"Found cached DMN activations at: {activations_cache_file}")
                 print(f"Loading cached DMN activations from {activations_cache_file}")
-                
+
                 with open(activations_cache_file, "rb") as f:
                     cached_data = pickle.load(f)
 
                 if "default_mode_activations" in cached_data:
                     self.default_mode_activations = cached_data["default_mode_activations"]
-                    debug_log(f"Loaded activations for {len(self.default_mode_activations)} layers", verbose=False)
-                    
+                    debug_log(
+                        f"Loaded activations for {len(self.default_mode_activations)} layers",
+                        verbose=False,
+                    )
+
                     # Log the structure of loaded activations
-                    layer_counts = {layer: len(heads) for layer, heads in self.default_mode_activations.items()}
+                    layer_counts = {
+                        layer: len(heads) for layer, heads in self.default_mode_activations.items()
+                    }
                     debug_log(f"Activation structure: {layer_counts}", verbose=False)
 
                     # Calculate importance scores from the loaded activations
@@ -264,7 +302,9 @@ class DefaultModeNetworkIdentifier:
                     debug_log("Calculated head importance scores from cached activations")
                     return
                 else:
-                    debug_log("Cached file doesn't contain 'default_mode_activations'", is_important=True)
+                    debug_log(
+                        "Cached file doesn't contain 'default_mode_activations'", is_important=True
+                    )
 
             except Exception as e:
                 debug_log(f"Error loading cached activations: {e}", is_important=True)
@@ -277,25 +317,27 @@ class DefaultModeNetworkIdentifier:
         chunks_to_process = chunks[:sample_size]
         debug_log(f"Processing {len(chunks_to_process)} chunks to identify DMN")
         print(f"Processing {len(chunks_to_process)} chunks to identify default mode network")
-        
+
         # Track success/error rate
         success_count = 0
         error_count = 0
-        
+
         for idx, chunk in enumerate(tqdm(chunks_to_process)):
             # Tokenize the chunk
             try:
                 inputs = tokenizer(chunk, return_tensors="pt").to(self.device)
-                
+
                 # Log token count
                 token_count = inputs.input_ids.shape[1]
                 if idx == 0:
-                    debug_log(f"Processing chunk {idx+1}/{len(chunks_to_process)}: {token_count} tokens")
-                
+                    debug_log(
+                        f"Processing chunk {idx+1}/{len(chunks_to_process)}: {token_count} tokens"
+                    )
+
                 # Process through model with no_grad to save memory
                 with torch.no_grad():
                     self.model(**inputs)
-                    
+
                 success_count += 1
             except Exception as e:
                 debug_log(f"Error processing chunk {idx}: {e}", is_important=True)
@@ -324,7 +366,10 @@ class DefaultModeNetworkIdentifier:
                 }
                 with open(activations_cache_file, "wb") as f:
                     pickle.dump(cache_data, f)
-                debug_log(f"Cached DMN activations for {len(self.default_mode_activations)} layers", verbose=False)
+                debug_log(
+                    f"Cached DMN activations for {len(self.default_mode_activations)} layers",
+                    verbose=False,
+                )
             except Exception as e:
                 debug_log(f"Error caching DMN activations: {e}", is_important=True)
 
@@ -335,15 +380,20 @@ class DefaultModeNetworkIdentifier:
         Calculate head importance scores based on the captured activations.
         """
         debug_log("Calculating head importance scores...")
-        
+
         if not self.default_mode_activations:
-            debug_log("No activations recorded! Cannot calculate head importance.", is_important=True)
+            debug_log(
+                "No activations recorded! Cannot calculate head importance.", is_important=True
+            )
             return
-            
+
         # Log the structure of recorded activations
         layer_counts = {layer: len(heads) for layer, heads in self.default_mode_activations.items()}
-        debug_log(f"Recorded activations for {len(self.default_mode_activations)} layers: {layer_counts}", verbose=False)
-        
+        debug_log(
+            f"Recorded activations for {len(self.default_mode_activations)} layers: {layer_counts}",
+            verbose=False,
+        )
+
         avg_activations: Dict[int, Dict[int, float]] = {}
         for layer_idx in self.default_mode_activations:
             avg_activations[layer_idx] = {}
@@ -362,20 +412,24 @@ class DefaultModeNetworkIdentifier:
 
         self.head_importance_scores = head_scores
         debug_log(f"Calculated importance scores for {len(head_scores)} heads")
-        
+
         # Log some stats about the scores
         if head_scores:
             top_5_scores = head_scores[:5]
             bottom_5_scores = head_scores[-5:]
             debug_log(f"Top 5 head scores: {top_5_scores}")
             debug_log(f"Bottom 5 head scores: {bottom_5_scores}")
-            
+
             min_score = min(score for _, _, score in head_scores)
             max_score = max(score for _, _, score in head_scores)
             avg_score = sum(score for _, _, score in head_scores) / len(head_scores)
-            debug_log(f"Score stats - Min: {min_score:.4f}, Max: {max_score:.4f}, Avg: {avg_score:.4f}")
+            debug_log(
+                f"Score stats - Min: {min_score:.4f}, Max: {max_score:.4f}, Avg: {avg_score:.4f}"
+            )
 
-    def select_top_default_mode_heads(self, top_n_per_layer: int = None) -> List[Tuple[int, int, float]]:
+    def select_top_default_mode_heads(
+        self, top_n_per_layer: int = None
+    ) -> List[Tuple[int, int, float]]:
         """
         Select top default mode network heads from the importance scores.
 
@@ -403,7 +457,9 @@ class DefaultModeNetworkIdentifier:
         heads_per_layer = {}
         self.top_default_mode_heads = []
 
-        for layer_idx, head_idx, score in sorted(self.head_importance_scores, key=lambda x: x[2], reverse=True):
+        for layer_idx, head_idx, score in sorted(
+            self.head_importance_scores, key=lambda x: x[2], reverse=True
+        ):
             # Skip first and last layers if configured
             if skip_first_last and (layer_idx == 0 or layer_idx == self.num_layers - 1):
                 continue
@@ -418,16 +474,21 @@ class DefaultModeNetworkIdentifier:
                 self.top_default_mode_heads.append((layer_idx, head_idx, score))
 
         # Sort the top default mode heads by score (highest to lowest) - this is the important change
-        self.top_default_mode_heads = sorted(self.top_default_mode_heads, key=lambda x: x[2], reverse=True)
+        self.top_default_mode_heads = sorted(
+            self.top_default_mode_heads, key=lambda x: x[2], reverse=True
+        )
 
         # Log the heads selected per layer
-        debug_log(f"Selected {len(self.top_default_mode_heads)} heads across {len(heads_per_layer)} layers", is_important=True)
+        debug_log(
+            f"Selected {len(self.top_default_mode_heads)} heads across {len(heads_per_layer)} layers",
+            is_important=True,
+        )
         debug_log("Heads selected per layer:")
         for layer_idx in sorted(heads_per_layer.keys()):
             selected_heads = heads_per_layer[layer_idx]
             head_indices = [head_idx for head_idx, _ in selected_heads]
             debug_log(f"Layer {layer_idx}: {len(selected_heads)} heads {head_indices}")
-            
+
         # Print the top 10 heads overall by importance
         if self.top_default_mode_heads:
             debug_log("Top 10 most important heads across all layers:", is_important=True)
@@ -446,10 +507,11 @@ class DefaultModeNetworkIdentifier:
         # Import here to avoid circular imports
         try:
             from ..utils import get_git_commit_hash
+
             git_hash = get_git_commit_hash()
         except ImportError:
             git_hash = None
-            
+
         data = {
             "model_name": self.model_name,
             "head_importance_scores": self.head_importance_scores,
@@ -484,16 +546,24 @@ class DefaultModeNetworkIdentifier:
             # Display git commit hash information if available
             if "git_commit" in data and data["git_commit"]:
                 print(f"DMN was identified with git commit: {data['git_commit']}")
-            
+
             # Try to get current git commit hash for comparison
             try:
                 from ..utils import get_git_commit_hash
+
                 current_hash = get_git_commit_hash()
-                if current_hash and "git_commit" in data and data["git_commit"] and current_hash != data["git_commit"]:
-                    print(f"Warning: Current git commit ({current_hash}) differs from the one used for identification ({data['git_commit']})")
+                if (
+                    current_hash
+                    and "git_commit" in data
+                    and data["git_commit"]
+                    and current_hash != data["git_commit"]
+                ):
+                    print(
+                        f"Warning: Current git commit ({current_hash}) differs from the one used for identification ({data['git_commit']})"
+                    )
             except ImportError:
                 pass
-                
+
             # Load data with error handling for different formats
             if "head_importance_scores" in data:
                 self.head_importance_scores = data["head_importance_scores"]

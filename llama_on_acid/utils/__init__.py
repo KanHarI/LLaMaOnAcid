@@ -9,7 +9,7 @@ from typing import Optional
 def get_git_commit_hash() -> Optional[str]:
     """
     Get the current git commit hash at runtime.
-    
+
     Returns:
         The git commit hash as a string, or None if it couldn't be retrieved
     """

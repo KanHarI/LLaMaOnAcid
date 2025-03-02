@@ -9,7 +9,12 @@ from datetime import datetime
 
 import torch
 
-from llama_on_acid.config import DEFAULT_INHIBITION_FACTORS, DEFAULT_MODEL_NAME, DEFAULT_QUERIES, DMN_CONFIG
+from llama_on_acid.config import (
+    DEFAULT_INHIBITION_FACTORS,
+    DEFAULT_MODEL_NAME,
+    DEFAULT_QUERIES,
+    DMN_CONFIG,
+)
 from llama_on_acid.experiment import DefaultModeNetworkExperiment
 from llama_on_acid.utils import get_git_commit_hash
 
@@ -84,7 +89,7 @@ def main() -> None:
         default=0.85,
         help="Gamma decay factor for inhibition (default: 0.85). Higher values preserve more inhibition across heads.",
     )
-    
+
     # DMN identification parameters
     parser.add_argument(
         "--top-heads-per-layer",
@@ -131,7 +136,7 @@ def main() -> None:
     DMN_CONFIG["top_n_per_layer"] = args.top_heads_per_layer
     DMN_CONFIG["skip_first_last"] = args.skip_first_last
     DMN_CONFIG["verbose_logging"] = args.verbose_logging
-    
+
     # Use specified queries or default queries
     queries = args.queries if args.queries else DEFAULT_QUERIES
     print(f"Using {len(queries)} queries and {len(args.factors)} inhibition factors")
@@ -173,7 +178,7 @@ def main() -> None:
     with open(results_file, "wb") as f:
         pickle.dump(results, f)
     print(f"Saved full results to {results_file}")
-    
+
     # Save metadata file with git hash
     metadata_file = os.path.join(output_dir, "experiment_metadata.txt")
     with open(metadata_file, "w") as f:

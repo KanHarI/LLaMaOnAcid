@@ -34,7 +34,9 @@ def fetch_top_wikipedia_articles(
     Returns:
         List of article titles
     """
-    print(f"[WIKI-LIST] Fetching top {n} Wikipedia articles (cache={use_cache}, force_refresh={force_refresh})")
+    print(
+        f"[WIKI-LIST] Fetching top {n} Wikipedia articles (cache={use_cache}, force_refresh={force_refresh})"
+    )
     cache_dir = cache_dir or CACHE_DIR
     os.makedirs(cache_dir, exist_ok=True)
 
@@ -59,7 +61,9 @@ def fetch_top_wikipedia_articles(
 
             if cache_age <= CACHE_TTL_DAYS["articles"]:
                 articles = cached_data.get("articles", [])[:n]
-                print(f"[WIKI-LIST] HIT: Using cached list of {len(articles)} top articles from {cache_timestamp}")
+                print(
+                    f"[WIKI-LIST] HIT: Using cached list of {len(articles)} top articles from {cache_timestamp}"
+                )
                 if articles:
                     print(f"[WIKI-LIST] Sample articles: {articles[:3]}")
                 return cast(List[str], articles)
@@ -85,24 +89,24 @@ def fetch_top_wikipedia_articles(
         response = requests.get(url)
         status_code = response.status_code
         print(f"[WIKI-LIST] API response status: {status_code}")
-        
+
         response.raise_for_status()  # Raise an exception for HTTP errors
         data = response.json()
 
         # Extract article titles
         articles = []
         print(f"[WIKI-LIST] Processing API response to extract article titles")
-        
-        if 'items' not in data or not data['items']:
+
+        if "items" not in data or not data["items"]:
             print(f"[WIKI-LIST] ERROR: API response missing 'items' field: {data.keys()}")
             raise ValueError("Invalid API response - missing 'items' field")
-            
+
         for item in data["items"][0]["articles"]:
             if "Main_Page" not in item["article"] and "Special:" not in item["article"]:
                 articles.append(item["article"])
                 if len(articles) >= n:
                     break
-        
+
         print(f"[WIKI-LIST] Extracted {len(articles)} article titles")
         if articles:
             print(f"[WIKI-LIST] Sample articles: {articles[:3]}")
@@ -121,10 +125,14 @@ def fetch_top_wikipedia_articles(
     except requests.exceptions.HTTPError as http_err:
         print(f"[WIKI-LIST] ERROR: HTTP error occurred: {http_err}")
         print(f"[WIKI-LIST] ERROR: Status code: {response.status_code}")
-        print(f"[WIKI-LIST] ERROR: Response text: {response.text[:500]}...")  # Print first 500 chars of response
+        print(
+            f"[WIKI-LIST] ERROR: Response text: {response.text[:500]}..."
+        )  # Print first 500 chars of response
     except requests.exceptions.JSONDecodeError as json_err:
         print(f"[WIKI-LIST] ERROR: JSON decode error: {json_err}")
-        print(f"[WIKI-LIST] ERROR: Response text: {response.text[:500]}...")  # Print first 500 chars of response
+        print(
+            f"[WIKI-LIST] ERROR: Response text: {response.text[:500]}..."
+        )  # Print first 500 chars of response
     except Exception as err:
         print(f"[WIKI-LIST] ERROR: Other error occurred: {err}")
 
@@ -135,7 +143,9 @@ def fetch_top_wikipedia_articles(
                 cached_data = json.load(f)
             articles = cached_data.get("articles", [])[:n]
             if articles:
-                print(f"[WIKI-LIST] FALLBACK: Using expired cached list of {len(articles)} articles")
+                print(
+                    f"[WIKI-LIST] FALLBACK: Using expired cached list of {len(articles)} articles"
+                )
                 if articles:
                     print(f"[WIKI-LIST] FALLBACK sample articles: {articles[:3]}")
                 return cast(List[str], articles)
@@ -170,7 +180,7 @@ def fetch_article_content(
         Article content as a string
     """
     print(f"[WIKI] Processing article: '{article_title}'")
-    
+
     # Create cache directory
     wiki_cache_dir = os.path.join(cache_dir or CACHE_DIR, model_name.replace("/", "_"))
     os.makedirs(wiki_cache_dir, exist_ok=True)
@@ -178,7 +188,7 @@ def fetch_article_content(
     cache_file = os.path.join(
         wiki_cache_dir, f"article_{article_title.replace(' ', '_').replace('/', '_')}.json"
     )
-    
+
     print(f"[WIKI] Cache file: {cache_file}")
     print(f"[WIKI] Cache exists: {os.path.exists(cache_file)}")
 
@@ -196,8 +206,14 @@ def fetch_article_content(
 
                 if cache_age <= CACHE_TTL_DAYS["content"]:
                     # Cache is still valid
-                    content_sample = cached_data.get("content", "")[:100] + "..." if cached_data.get("content") else ""
-                    print(f"[WIKI] HIT: Using cached content for '{article_title}' ({cache_age} days old)")
+                    content_sample = (
+                        cached_data.get("content", "")[:100] + "..."
+                        if cached_data.get("content")
+                        else ""
+                    )
+                    print(
+                        f"[WIKI] HIT: Using cached content for '{article_title}' ({cache_age} days old)"
+                    )
                     print(f"[WIKI] Content sample: {content_sample}")
                     return cached_data.get("content", "")
                 else:
@@ -236,7 +252,9 @@ def fetch_article_content(
             except requests.exceptions.RequestException as e:
                 print(f"[WIKI] API request failed: {e}")
                 if attempt < max_retries - 1:
-                    print(f"[WIKI] Retry {attempt+1}/{max_retries} for '{article_title}' after error: {e}")
+                    print(
+                        f"[WIKI] Retry {attempt+1}/{max_retries} for '{article_title}' after error: {e}"
+                    )
                     time.sleep(retry_delay * (attempt + 1))  # Exponential backoff
                 else:
                     raise
@@ -252,7 +270,7 @@ def fetch_article_content(
         # Get the first page (there should only be one)
         page_id = next(iter(pages))
         print(f"[WIKI] Page ID: {page_id}")
-        
+
         if page_id == "-1":
             print(f"[WIKI] ERROR: Article '{article_title}' not found")
             raise ValueError(f"Article '{article_title}' not found")
@@ -273,7 +291,9 @@ def fetch_article_content(
                 }
                 with open(cache_file, "w", encoding="utf-8") as f:
                     json.dump(cache_data, f, ensure_ascii=False)
-                print(f"[WIKI] CACHED: Successfully saved content for '{article_title}' ({content_length} chars)")
+                print(
+                    f"[WIKI] CACHED: Successfully saved content for '{article_title}' ({content_length} chars)"
+                )
             except Exception as e:
                 print(f"[WIKI] ERROR: Error caching content for '{article_title}': {e}")
 
@@ -294,6 +314,8 @@ def fetch_article_content(
                 return content
             except Exception as cache_e:
                 print(f"[WIKI] ERROR: Error reading expired cache: {cache_e}")
-        
-        print(f"[WIKI] ERROR: Could not retrieve content for '{article_title}' - returning empty string")
+
+        print(
+            f"[WIKI] ERROR: Could not retrieve content for '{article_title}' - returning empty string"
+        )
         return ""
