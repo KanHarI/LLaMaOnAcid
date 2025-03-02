@@ -54,7 +54,7 @@ def prepare_text_chunks(
 
     if use_cache and os.path.exists(chunks_cache_file):
         try:
-            print(f"[CHUNKS] Loading cached chunks...")
+            print("[CHUNKS] Loading cached chunks...")
             with open(chunks_cache_file, "rb") as f:
                 cached_data = pickle.load(f)
 

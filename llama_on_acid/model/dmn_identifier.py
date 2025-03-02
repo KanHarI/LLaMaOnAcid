@@ -428,7 +428,7 @@ class DefaultModeNetworkIdentifier:
             )
 
     def select_top_default_mode_heads(
-        self, top_n_per_layer: int = None
+        self, top_n_per_layer: Optional[int] = None
     ) -> List[Tuple[int, int, float]]:
         """
         Select top default mode network heads from the importance scores.
@@ -454,7 +454,7 @@ class DefaultModeNetworkIdentifier:
             debug_log("Skipping first and last layers as per DMN_CONFIG setting")
 
         # Dictionary to track heads selected per layer
-        heads_per_layer = {}
+        heads_per_layer: Dict[int, List[Tuple[int, int, float]]] = {}
         self.top_default_mode_heads = []
 
         for layer_idx, head_idx, score in sorted(
@@ -470,7 +470,7 @@ class DefaultModeNetworkIdentifier:
 
             # Add head if we haven't reached the limit for this layer
             if len(heads_per_layer[layer_idx]) < top_n_per_layer:
-                heads_per_layer[layer_idx].append((head_idx, score))
+                heads_per_layer[layer_idx].append((layer_idx, head_idx, score))
                 self.top_default_mode_heads.append((layer_idx, head_idx, score))
 
         # Sort the top default mode heads by score (highest to lowest) - this is the important change
@@ -486,7 +486,7 @@ class DefaultModeNetworkIdentifier:
         debug_log("Heads selected per layer:")
         for layer_idx in sorted(heads_per_layer.keys()):
             selected_heads = heads_per_layer[layer_idx]
-            head_indices = [head_idx for head_idx, _ in selected_heads]
+            head_indices = [head_idx for _, head_idx, _ in selected_heads]
             debug_log(f"Layer {layer_idx}: {len(selected_heads)} heads {head_indices}")
 
         # Print the top 10 heads overall by importance

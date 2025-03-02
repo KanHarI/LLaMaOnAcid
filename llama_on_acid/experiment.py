@@ -267,7 +267,7 @@ class DefaultModeNetworkExperiment:
         debug_log("DMN identification complete", divider=True)
 
     def select_top_default_mode_heads(
-        self, top_n_per_layer: int = None
+        self, top_n_per_layer: Optional[int] = None
     ) -> List[Tuple[int, int, float]]:
         """
         Select the top N most active heads from each layer (excluding first and last).
@@ -283,17 +283,18 @@ class DefaultModeNetworkExperiment:
             top_n_per_layer = DMN_CONFIG["top_n_per_layer"]
 
         verbose = DMN_CONFIG["verbose_logging"]
-        debug_log(
-            f"Selecting top {top_n_per_layer} default mode heads per layer",
-            is_important=True,
-            verbose=verbose,
-        )
+        debug_log("Selecting top default mode network heads...", is_important=True)
 
         if not hasattr(self, "dmn_identifier") or not self.dmn_identifier:
             raise ValueError("Must run identify_default_mode_network() first")
 
         self.top_default_mode_heads = self.dmn_identifier.select_top_default_mode_heads(
             top_n_per_layer=top_n_per_layer
+        )
+
+        # Displaying the top heads
+        debug_log(
+            f"Selected {len(self.top_default_mode_heads)} heads for DMN", verbose=bool(verbose)
         )
 
         return self.top_default_mode_heads
@@ -501,12 +502,10 @@ class DefaultModeNetworkExperiment:
             dmn_json_file = os.path.join(output_dir, "dmn_heads.json")
             try:
                 with open(dmn_json_file, "w") as f:
-                    import json
-
                     json.dump(
                         [
-                            {"layer": l, "head": h, "score": float(s)}
-                            for l, h, s in self.dmn_identifier.top_default_mode_heads
+                            {"layer": layer_idx, "head": head_idx, "score": float(score)}
+                            for layer_idx, head_idx, score in self.dmn_identifier.top_default_mode_heads
                         ],
                         f,
                         indent=2,
@@ -568,7 +567,8 @@ class DefaultModeNetworkExperiment:
                             output_dir,
                             f"query_{query_idx+1}_{query_safe}_factor_{factor_str}_gamma_{gamma:.2f}.txt",
                         )
-                        save_query_outputs(result, output_path)
+                        # Convert the single result to a list for save_query_outputs
+                        save_query_outputs([result], output_path)
                         print(f"    Saved intermediate result to {output_path}")
 
                 except Exception as e:

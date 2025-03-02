@@ -85,7 +85,7 @@ def fetch_top_wikipedia_articles(
     print(f"[WIKI-LIST] API URL: {url}")
 
     try:
-        print(f"[WIKI-LIST] MISS: Requesting data from Wikimedia API")
+        print("[WIKI-LIST] MISS: Requesting data from Wikimedia API")
         response = requests.get(url)
         status_code = response.status_code
         print(f"[WIKI-LIST] API response status: {status_code}")
@@ -95,7 +95,7 @@ def fetch_top_wikipedia_articles(
 
         # Extract article titles
         articles = []
-        print(f"[WIKI-LIST] Processing API response to extract article titles")
+        print("[WIKI-LIST] Processing API response to extract article titles")
 
         if "items" not in data or not data["items"]:
             print(f"[WIKI-LIST] ERROR: API response missing 'items' field: {data.keys()}")

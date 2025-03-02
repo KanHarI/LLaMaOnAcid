@@ -24,7 +24,7 @@ def run_simple_example() -> None:
         experiment.fetch_top_wikipedia_articles(n=10)  # Limit to 10 articles for speed
         experiment.prepare_text_chunks(chunk_size=512)
         experiment.identify_default_mode_network(sample_size=20)  # Use fewer samples for speed
-        experiment.select_top_default_mode_heads(top_n=30)
+        experiment.select_top_default_mode_heads(top_n_per_layer=30)
 
         # Save for future use
         experiment.save_default_mode_network(dmn_file)

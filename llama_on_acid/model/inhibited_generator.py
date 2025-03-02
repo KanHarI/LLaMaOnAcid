@@ -70,6 +70,9 @@ class InhibitedGenerator:
         self.tokenizer = tokenizer
         self.device = device
         self.top_default_mode_heads = top_default_mode_heads
+        # Initialize the attention_masks attribute
+        self.attention_masks: Dict[int, Dict[int, float]] = {}
+        self.registered_hooks: Dict[Tuple[int, int], RemovableHandle] = {}
 
         debug_log(f"Received {len(top_default_mode_heads)} DMN heads")
         if top_default_mode_heads:
@@ -231,7 +234,7 @@ class InhibitedGenerator:
                 debug_log(f"Filtered to {len(filtered_heads)} valid heads")
 
             # Now create the attention masks with validated heads and gamma decay
-            debug_log("Applying gamma decay to inhibition factors:", is_important=True)
+            debug_log("Applying gamma decay to inhibition factors:")
 
             # First, ensure the heads are sorted by importance score (highest first)
             sorted_heads = sorted(self.top_default_mode_heads, key=lambda x: x[2], reverse=True)
@@ -252,11 +255,11 @@ class InhibitedGenerator:
                     )
 
             debug_log(f"Created attention masks with gamma decay for {len(attention_masks)} layers")
-            debug_log(f"Overall DMN inhibition summary:")
+            debug_log("Overall DMN inhibition summary:")
             debug_log(f"  Base inhibition factor: {inhibition_factor}")
             debug_log(f"  Gamma decay factor: {gamma}")
             debug_log(f"  Number of inhibited heads: {len(sorted_heads)}")
-            debug_log(f"  Most inhibited head factor: {inhibition_factor}")
+            debug_log("  Most inhibited head factor: {inhibition_factor}")
             debug_log(
                 f"  Least inhibited head factor: {inhibition_factor * (gamma ** (len(sorted_heads)-1)):.6f}"
             )
@@ -279,6 +282,17 @@ class InhibitedGenerator:
                 is_important=True,
             )
             debug_log("Attempting to use alternative inhibition method...")
+
+        # Track errors and flash attention layers for reporting and debugging
+        verbose = DMN_CONFIG["verbose_logging"]
+
+        debug_log(
+            f"Model has {self.num_layers} layers and {self.num_heads} heads per layer",
+            verbose=bool(verbose),
+        )
+
+        # Convert the model to eval mode for safety
+        self.model.eval()
 
         # Apply attention inhibition during generation
         inhibited_output = self._generate_with_attention_inhibition(
@@ -314,6 +328,9 @@ class InhibitedGenerator:
         Returns:
             Generated text
         """
+        # Get verbosity setting from config
+        verbose = DMN_CONFIG["verbose_logging"]
+
         debug_log("Starting generation with attention inhibition...")
 
         # Tokenize the prompt
@@ -321,7 +338,7 @@ class InhibitedGenerator:
         debug_log(f"Input shape: {input_ids.shape}")
 
         # Register hooks for attention inhibition
-        hooks = []
+        hooks: List[RemovableHandle] = []
 
         def get_inhibition_hook(
             layer_idx: int, head_masks: Dict[int, float]
@@ -370,6 +387,7 @@ class InhibitedGenerator:
                         # Update the output tuple
                         output_list = list(output)
                         output_list[3] = new_weights
+                        # Return the modified output as a tuple
                         return tuple(output_list)
 
                     # If no modifications were made, return the original output
@@ -480,8 +498,19 @@ class InhibitedGenerator:
         debug_log("All hooks removed")
 
         # Decode and return
-        debug_log("Decoding output...")
-        generated_text = self.tokenizer.decode(outputs[0], skip_special_tokens=True)
+        debug_log("Decoding output tokens to text", verbose=bool(verbose))
+
+        # Fix tuple assignment error by converting to a list
+        all_tokens = list(outputs[0].cpu().numpy())
+        debug_log(f"Generated {len(all_tokens)} total tokens", verbose=bool(verbose))
+
+        # Fix tuple indexing by first converting to a list
+        outputs_list = list(outputs)
+        outputs_list[0] = outputs_list[0][:, input_ids.shape[1] :]
+
+        debug_log(f"New tokens count: {outputs_list[0].shape[1]}", verbose=bool(verbose))
+
+        generated_text = self.tokenizer.decode(outputs_list[0], skip_special_tokens=True)
         debug_log(f"Output decoded, length: {len(generated_text)} characters")
         return cast(str, generated_text)
 
@@ -509,18 +538,14 @@ class InhibitedGenerator:
                 ):
                     model_arch = self.model.config.architectures[0]
 
-            debug_log(f"Model architecture: {model_arch}", verbose=verbose)
+            debug_log(f"Model architecture: {model_arch}", verbose=bool(verbose))
 
             # Convert the model to eval mode for safety
             self.model.eval()
 
-            # Track errors for reporting at the end
-            errors = 0
-            flash_attention_layers = 0
-
             debug_log(
                 f"Model has {self.num_layers} layers and {self.num_heads} heads per layer",
-                verbose=verbose,
+                verbose=bool(verbose),
             )
 
             # Get a list of unique layers that have DMN heads
@@ -529,7 +554,7 @@ class InhibitedGenerator:
             )
             debug_log(
                 f"DMN heads present in {len(layers_with_dmn)} layers: {layers_with_dmn}",
-                verbose=verbose,
+                verbose=bool(verbose),
             )
 
             # Track which heads have hooks registered by layer and head index
@@ -545,18 +570,19 @@ class InhibitedGenerator:
                 ]
 
                 if not layer_heads:
-                    debug_log(f"Layer {layer_idx}: No DMN heads to inhibit", verbose=verbose)
+                    debug_log(f"Layer {layer_idx}: No DMN heads to inhibit", verbose=bool(verbose))
                     continue
 
                 debug_log(
                     f"Layer {layer_idx}: Registering hooks for {len(layer_heads)} heads: {[h for h, _ in layer_heads]}",
-                    verbose=verbose,
+                    verbose=bool(verbose),
                 )
 
                 # Register hooks for each head in the layer
                 for head_idx, _ in layer_heads:
                     debug_log(
-                        f"Layer {layer_idx}, head {head_idx}: Registering hook", verbose=verbose
+                        f"Layer {layer_idx}, head {head_idx}: Registering hook",
+                        verbose=bool(verbose),
                     )
                     hook_handle = self.model.model.layers[
                         layer_idx
@@ -578,7 +604,9 @@ class InhibitedGenerator:
                 hook_handle.remove()
             raise
 
-    def _apply_inhibition(self, layer_idx: int, head_idx: int, input: Any, output: Any) -> None:
+    def _apply_inhibition(
+        self, layer_idx: int, head_idx: int, input: Any, output: Any
+    ) -> Optional[Tuple[Any, ...]]:
         """
         Apply inhibition to the attention output for a specific layer and head.
 
@@ -587,61 +615,60 @@ class InhibitedGenerator:
             head_idx: Index of the head
             input: Input to the attention module
             output: Output from the attention module
+
+        Returns:
+            Modified output tuple if changes were made, None otherwise
         """
-        # Configure logging verbosity
-        verbose = DMN_CONFIG["verbose_logging"]
+        try:
+            verbose = DMN_CONFIG["verbose_logging"]
 
-        debug_log(f"Applying inhibition to layer {layer_idx}, head {head_idx}", verbose=verbose)
-
-        # Check if the layer and head are in the registered_hooks dictionary
-        if (layer_idx, head_idx) in self.registered_hooks:
-            debug_log(f"Layer {layer_idx}, head {head_idx}: Hook found", verbose=verbose)
-
-            # Get the inhibition factor for this layer and head
-            inhibition_factor = self.attention_masks[layer_idx][head_idx]
             debug_log(
-                f"Layer {layer_idx}, head {head_idx}: Inhibition factor: {inhibition_factor}",
-                verbose=verbose,
+                f"Applying inhibition to layer {layer_idx}, head {head_idx}", verbose=bool(verbose)
             )
 
-            # Apply inhibition to the output
-            if isinstance(output, tuple) and len(output) > 3:
-                # For models with attention weights at index 3
-                attn_weights = output[3]
+            # Check if the layer and head are in the registered_hooks dictionary
+            if (layer_idx, head_idx) in self.registered_hooks:
+                debug_log(f"Layer {layer_idx}, head {head_idx}: Hook found", verbose=bool(verbose))
+
+                # Get the inhibition factor for this head from the attention_masks dictionary
+                inhibition_factor = self.attention_masks.get(layer_idx, {}).get(head_idx, 0.0)
                 debug_log(
-                    f"Layer {layer_idx}, head {head_idx}: Attention weights shape: {attn_weights.shape}",
-                    verbose=verbose,
+                    f"Layer {layer_idx}, head {head_idx}: Inhibition factor: {inhibition_factor}",
+                    verbose=bool(verbose),
                 )
 
-                # Create a scaling tensor that's 1 except for the target head
-                scaling = torch.ones_like(attn_weights)
-                scaling[:, :, head_idx, :] = inhibition_factor
-                debug_log(
-                    f"Layer {layer_idx}, head {head_idx}: Scaling tensor shape: {scaling.shape}",
-                    verbose=verbose,
-                )
+                # Apply inhibition to the output
+                if isinstance(output, tuple) and len(output) > 3:
+                    # For models with attention weights at index 3
+                    attn_weights = output[3]
+                    debug_log(
+                        f"Layer {layer_idx}, head {head_idx}: Attention weights shape: {attn_weights.shape}",
+                        verbose=bool(verbose),
+                    )
 
-                # Apply scaling
-                new_weights = attn_weights * scaling
-                debug_log(
-                    f"Layer {layer_idx}, head {head_idx}: New weights shape: {new_weights.shape}",
-                    verbose=verbose,
-                )
+                    # Create a scaling tensor that's 1 except for the target head
+                    scaling = torch.ones_like(attn_weights)
+                    scaling[:, :, head_idx, :] = inhibition_factor
+                    debug_log(
+                        f"Layer {layer_idx}, head {head_idx}: Scaling tensor shape: {scaling.shape}",
+                        verbose=bool(verbose),
+                    )
 
-                # Update the output tuple
-                output_list = list(output)
-                output_list[3] = new_weights
-                output_list = tuple(output_list)
-                debug_log(
-                    f"Layer {layer_idx}, head {head_idx}: Updated output shape: {output_list[3].shape}",
-                    verbose=verbose,
-                )
+                    # Apply scaling
+                    new_weights = attn_weights * scaling
+                    debug_log(
+                        f"Layer {layer_idx}, head {head_idx}: New weights shape: {new_weights.shape}",
+                        verbose=bool(verbose),
+                    )
 
-                output[3] = output_list[3]
-            else:
-                debug_log(
-                    f"Layer {layer_idx}, head {head_idx}: Unsupported output format",
-                    is_important=True,
-                )
-        else:
-            debug_log(f"Layer {layer_idx}, head {head_idx}: Hook not found", is_important=True)
+                    # Update the output tuple
+                    output_list = list(output)
+                    output_list[3] = new_weights
+                    # Return the modified output as a tuple
+                    return tuple(output_list)
+
+            # If we didn't make any changes, return None
+            return None
+        except Exception as e:
+            debug_log(f"Error applying inhibition: {e}", is_important=True)
+            return None
