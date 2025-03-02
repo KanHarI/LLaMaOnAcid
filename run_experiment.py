@@ -86,8 +86,8 @@ def main() -> None:
     parser.add_argument(
         "--gamma",
         type=float,
-        default=0.85,
-        help="Gamma decay factor for inhibition (default: 0.85). Higher values preserve more inhibition across heads.",
+        default=0.95,
+        help="Gamma decay factor for inhibition (default: 0.95). Higher values preserve more inhibition across heads.",
     )
 
     # DMN identification parameters

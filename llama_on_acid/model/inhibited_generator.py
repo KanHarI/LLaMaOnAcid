@@ -124,7 +124,7 @@ class InhibitedGenerator:
         self,
         prompt: str,
         inhibition_factor: float = 0.5,
-        gamma: float = 0.85,
+        gamma: float = 0.95,
         max_new_tokens: int = 200,
         temperature: float = 0.7,
         top_p: float = 0.9,

@@ -17,7 +17,7 @@ Options:
   -q, --queries "Q1" "Q2"   Custom test queries (default: uses predefined set)
   -f, --factors N1 N2 N3    Inhibition factors between 0.0-1.0 (default: uses run_experiment.py defaults)
   -t, --max-tokens N        Maximum tokens to generate (default: uses run_experiment.py defaults)
-  -g, --gamma N             Gamma decay factor for inhibition (default: 0.85)
+  -g, --gamma N             Gamma decay factor for inhibition (default: 0.95)
   --flash-attn              Install flash-attention for better performance (recommended for CUDA systems)
 
 Examples:
@@ -60,7 +60,7 @@ DMN_FILE="dmn_heads_mistral-7b-v0.1.json"
 CUSTOM_QUERIES=()
 FACTORS=()
 MAX_TOKENS=""
-GAMMA=0.85
+GAMMA=0.95
 INSTALL_FLASH_ATTN=false
 
 # Parse command-line arguments
