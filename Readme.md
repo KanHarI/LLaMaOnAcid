@@ -55,6 +55,18 @@ cd LLaMaOnAcid
 pip install -r requirements.txt
 ```
 
+### Authentication
+
+Configure Git to store credentials and authenticate with Hugging Face to access models:
+
+```bash
+# Configure Git to store credentials
+git config --global credential.helper store
+
+# Log in to Hugging Face
+huggingface-cli login
+```
+
 ### Requirements
 
 - Python 3.8+
