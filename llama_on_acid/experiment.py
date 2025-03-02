@@ -324,53 +324,58 @@ class DefaultModeNetworkExperiment:
         self,
         prompt: str,
         inhibition_factor: float = 0.5,
+        gamma: float = 0.85,
         max_new_tokens: int = int(DEFAULT_GENERATION_PARAMS["max_new_tokens"]),
         temperature: float = DEFAULT_GENERATION_PARAMS["temperature"],
         top_p: float = DEFAULT_GENERATION_PARAMS["top_p"],
         do_sample: bool = bool(DEFAULT_GENERATION_PARAMS["do_sample"]),
     ) -> Tuple[str, str]:
         """
-        Generate text with and without inhibition of the default mode network.
+        Generate text with and without inhibition of default mode network.
 
         Args:
             prompt: Input prompt
-            inhibition_factor: Factor by which to scale down the attention weights (0-1)
+            inhibition_factor: Base factor by which to scale down DMN attention weights (0-1)
+            gamma: Decay factor for inhibition across heads (0-1)
             max_new_tokens: Maximum number of tokens to generate
-            temperature: Temperature for sampling
+            temperature: Sampling temperature
             top_p: Top-p sampling parameter
-            do_sample: Whether to use sampling (vs greedy decoding)
+            do_sample: Whether to sample or use greedy decoding
 
         Returns:
             Tuple of (normal_output, inhibited_output)
         """
-        debug_log(f"GENERATE: Generating with inhibition_factor={inhibition_factor}", is_important=True)
-        debug_log(f"Prompt: '{prompt[:50]}...'", verbose=False)
+        debug_log(f"GENERATE: Starting generation with inhibition factor {inhibition_factor}, gamma {gamma}", is_important=True)
         
         # Initialize generator if not already done
         if self.generator is None:
-            debug_log("Generator not initialized, initializing now...", verbose=False)
             self._initialize_generator()
-
-        # The generator should be initialized by now, but if it's still None, we have a problem
+            
         if self.generator is None:
-            error_msg = "Failed to initialize generator"
+            error_msg = "Generator could not be initialized. DMN must be identified or loaded first."
             debug_log(error_msg, is_important=True)
             raise ValueError(error_msg)
 
+        # Set logging level for transformers
+        import logging
+        logging.getLogger("transformers").setLevel(logging.ERROR)
+
+        # Generate text
         try:
-            results = self.generator.generate_with_inhibition(
+            normal_output, inhibited_output = self.generator.generate_with_inhibition(
                 prompt=prompt,
                 inhibition_factor=inhibition_factor,
+                gamma=gamma,
                 max_new_tokens=max_new_tokens,
                 temperature=temperature,
                 top_p=top_p,
                 do_sample=do_sample,
             )
-            debug_log("Generation successful", verbose=False)
-            return results
         except Exception as e:
             debug_log(f"Error during generation: {e}", is_important=True)
             raise
+
+        return normal_output, inhibited_output
 
     def visualize_default_mode_network(
         self, top_n: int = 100, save_path: Optional[str] = None
@@ -395,6 +400,7 @@ class DefaultModeNetworkExperiment:
         self,
         queries: List[str] = DEFAULT_QUERIES,
         inhibition_factors: List[float] = DEFAULT_INHIBITION_FACTORS,
+        gamma: float = 0.85,
         max_new_tokens: int = 100,
         n_chunks: int = 100,
         dmn_file: Optional[str] = None,
@@ -405,165 +411,134 @@ class DefaultModeNetworkExperiment:
         top_n_per_layer: Optional[int] = None,
     ) -> List[Dict[str, Any]]:
         """
-        Run a complete experiment with multiple queries and inhibition factors.
+        Run a default mode network inhibition experiment.
 
         Args:
-            queries: List of prompts to use
-            inhibition_factors: List of inhibition factors to try
-            max_new_tokens: Maximum number of tokens to generate
-            n_chunks: Number of chunks to process for DMN identification
-            dmn_file: Path to a pre-identified DMN file
-            use_cache: Whether to use cached data
+            queries: List of queries to use
+            inhibition_factors: List of inhibition factors to test
+            gamma: Decay factor for inhibition across heads (0-1)
+            max_new_tokens: Maximum number of tokens to generate per response
+            n_chunks: Number of Wikipedia chunks to process for DMN identification
+            dmn_file: Path to pre-identified DMN file (if available)
+            use_cache: Whether to use cached activations if available
             force_article_refresh: Whether to force refresh of Wikipedia articles
             output_dir: Directory to save outputs
-            save_intermediate: Whether to save intermediate results
-            top_n_per_layer: Number of top heads to select per layer (None to use config default)
+            save_intermediate: Whether to save results after each query
+            top_n_per_layer: Number of top heads to select per layer
 
         Returns:
-            List of result dictionaries
+            List of experiment results
         """
-        debug_log("Starting experiment run", is_important=True, divider=True)
+        debug_log(f"RUN_EXPERIMENT: Starting experiment with {len(queries)} queries and {len(inhibition_factors)} inhibition factors", is_important=True, divider=True)
+        debug_log(f"Parameters: gamma={gamma}, max_tokens={max_new_tokens}, output_dir={output_dir}")
+        
+        # Create output directory if it doesn't exist
         os.makedirs(output_dir, exist_ok=True)
         
-        # Make sure we have a model and tokenizer
-        if not hasattr(self, "model") or not hasattr(self, "tokenizer"):
-            debug_log("Loading model and tokenizer...", verbose=False)
-            self._load_model_and_tokenizer()
-            
-        # Identify or load the default mode network
+        # Initialize DMN identification if not already done
         if dmn_file and os.path.exists(dmn_file):
-            debug_log(f"Loading pre-identified DMN from: {dmn_file}", verbose=False)
+            debug_log(f"Loading DMN from file: {dmn_file}", is_important=True)
             self.load_default_mode_network(dmn_file)
-        else:
-            debug_log("No DMN file provided or file not found, identifying default mode network...", verbose=False)
-            self.fetch_top_wikipedia_articles(n=50, use_cache=use_cache, force_refresh=force_article_refresh)
-            self.prepare_text_chunks(chunk_size=512, use_cache=use_cache)
+        elif not hasattr(self.dmn_identifier, "top_default_mode_heads") or not self.dmn_identifier.top_default_mode_heads:
+            debug_log("DMN not identified yet. Running identification process...", is_important=True)
+            print("Identifying default mode network...")
+            self.fetch_top_wikipedia_articles(n=n_chunks, force_refresh=force_article_refresh)
+            self.prepare_text_chunks(use_cache=use_cache)
             self.identify_default_mode_network(sample_size=n_chunks, use_cache=use_cache)
             self.select_top_default_mode_heads(top_n_per_layer=top_n_per_layer)
             
-            # Save the identified DMN
-            dmn_save_path = os.path.join(output_dir, "identified_dmn.pkl")
-            debug_log(f"Saving identified DMN to: {dmn_save_path}", verbose=False)
-            self.save_default_mode_network(dmn_save_path)
+            # Save the identified DMN to the output directory
+            dmn_file = os.path.join(output_dir, "dmn_heads.pkl")
+            print(f"Saving identified DMN to: {dmn_file}")
+            self.save_default_mode_network(dmn_file)
+            
+            # Also save as JSON for easier inspection
+            dmn_json_file = os.path.join(output_dir, "dmn_heads.json")
+            try:
+                with open(dmn_json_file, "w") as f:
+                    import json
+                    json.dump([{"layer": l, "head": h, "score": float(s)} for l, h, s in self.dmn_identifier.top_default_mode_heads], f, indent=2)
+                print(f"Saved DMN as JSON to: {dmn_json_file}")
+            except Exception as e:
+                print(f"Error saving DMN JSON: {e}")
 
-        # Step 5: Generate responses
-        debug_log("STEP 5: Generating responses", divider=True)
-        print(
-            f"Generating responses for {len(queries)} queries with {len(inhibition_factors)} inhibition factors"
-        )
-
+        # Show heads ordered from most to least active
+        print("\nTop 10 DMN heads ordered by importance:")
+        for i, (layer, head, score) in enumerate(self.dmn_identifier.top_default_mode_heads[:10]):
+            print(f"#{i+1}: Layer {layer}, Head {head}, Score {score:.4f}")
+        print("\n")
+        
+        # Initialize results store
         results = []
-        at_least_one_succeeded = False
-
-        for q_idx, query in enumerate(queries):
+        
+        # Run the experiment for each query and inhibition factor
+        for query_idx, query in enumerate(queries):
+            print(f"\nQuery {query_idx+1}/{len(queries)}: {query}")
             query_results = []
-            debug_log(f"Processing query {q_idx+1}/{len(queries)}: '{query}'", verbose=False)
-            print(f"\nProcessing query: {query}")
-
-            for factor in inhibition_factors:
+            
+            for factor_idx, factor in enumerate(inhibition_factors):
+                print(f"  Inhibition factor: {factor}, Gamma: {gamma}")
+                
                 try:
-                    debug_log(f"  Generating with inhibition factor: {factor:.2f}", verbose=False)
-                    print(f"  Generating with inhibition factor: {factor:.2f}")
-                    response = None
-
-                    if factor == 0.0:
-                        # Normal generation without inhibition
-                        debug_log("  Normal generation without inhibition", verbose=False)
-                        inputs = self.tokenizer(query, return_tensors="pt").to(self.device)
-                        output = self.model.generate(
-                            **inputs,
-                            max_new_tokens=max_new_tokens,
-                            do_sample=True,
-                            temperature=0.7,
-                            top_p=0.9,
-                        )
-                        response = self.tokenizer.decode(output[0], skip_special_tokens=True)
-                    else:
-                        # Generation with inhibition
-                        debug_log(f"  Generation with inhibition factor {factor}", verbose=False)
-                        try:
-                            normal_response, inhibited_response = self.generate_with_inhibition(
-                                query, inhibition_factor=factor, max_new_tokens=max_new_tokens
-                            )
-                            response = inhibited_response
-                        except Exception as e:
-                            debug_log(f"  Error with inhibited generation: {e}", is_important=True)
-                            print(f"Error with inhibited generation: {e}")
-                            print("Falling back to normal generation")
-                            debug_log("  Falling back to normal generation", verbose=False)
-                            # Fall back to normal generation
-                            inputs = self.tokenizer(query, return_tensors="pt").to(self.device)
-                            output = self.model.generate(
-                                **inputs,
-                                max_new_tokens=max_new_tokens,
-                                do_sample=True,
-                                temperature=0.7,
-                                top_p=0.9,
-                            )
-                            response = self.tokenizer.decode(output[0], skip_special_tokens=True)
-
-                    # Add to results
-                    if response:
-                        result = {"query": query, "inhibition_factor": factor, "response": response}
-                        query_results.append(result)
-                        at_least_one_succeeded = True
-                        debug_log(f"  Generation successful (length: {len(response)})", verbose=False)
-                        print(f"  Generation successful (length: {len(response)})")
-                    else:
-                        debug_log("  Generation failed - empty response", is_important=True)
-                        print("  Generation failed - empty response")
-
+                    normal_output, inhibited_output = self.generate_with_inhibition(
+                        prompt=query,
+                        inhibition_factor=factor,
+                        gamma=gamma,
+                        max_new_tokens=max_new_tokens,
+                    )
+                    
+                    result = {
+                        "query": query,
+                        "query_idx": query_idx,
+                        "inhibition_factor": factor,
+                        "gamma": gamma,
+                        "normal_output": normal_output,
+                        "inhibited_output": inhibited_output,
+                        "timestamp": datetime.now().isoformat(),
+                    }
+                    
+                    # Calculate simple metrics
+                    normal_tokens = len(self.tokenizer.encode(normal_output))
+                    inhibited_tokens = len(self.tokenizer.encode(inhibited_output))
+                    result["normal_token_count"] = normal_tokens
+                    result["inhibited_token_count"] = inhibited_tokens
+                    
+                    # Save result
+                    query_results.append(result)
+                    results.append(result)
+                    
+                    # Save intermediate visualization for this query and inhibition factor
+                    if save_intermediate:
+                        query_safe = query.replace(" ", "_")[:30].replace("?", "").replace("/", "_")
+                        factor_str = f"{factor:.1f}"
+                        output_path = os.path.join(output_dir, f"query_{query_idx+1}_{query_safe}_factor_{factor_str}_gamma_{gamma:.2f}.txt")
+                        save_query_outputs(result, output_path)
+                        print(f"    Saved intermediate result to {output_path}")
+                    
                 except Exception as e:
-                    debug_log(f"  Error generating response for factor {factor}: {e}", is_important=True)
-                    print(f"  Error generating response for factor {factor}: {e}")
-
-            # Save intermediate results after each query
-            if query_results and save_intermediate:
-                debug_log(f"Saving intermediate results after query {q_idx+1}", verbose=False)
-                # Save only the new results for this query, not all accumulated results
-                save_query_outputs(
-                    query_results,  # Use only query_results instead of all results
-                    model_name=self.model_name,
-                    output_dir=output_dir,
-                    suffix=f"_query_{q_idx+1}",  # Use query index in suffix instead of results length
-                    save_individual_files=True,
-                )
-
-            # Extend the full results list with the new query results
-            results.extend(query_results)
-
-        # Step 6: Save outputs
-        debug_log("STEP 6: Saving final outputs", divider=True)
-        try:
-            print("\nSaving outputs...")
-            save_query_outputs(
-                results, 
-                model_name=self.model_name, 
-                output_dir=output_dir,
-                save_individual_files=False,
-            )
-            debug_log(f"Saved {len(results)} results to {output_dir}", verbose=False)
-        except Exception as e:
-            debug_log(f"Error saving outputs: {e}", is_important=True)
-            print(f"Error saving outputs: {e}")
-
-        if not at_least_one_succeeded:
-            debug_log("Warning: No successful generations were produced during this experiment.", is_important=True)
-            print("Warning: No successful generations were produced during this experiment.")
-
-        # Analyze and visualize results
-        try:
-            analysis_df = self.analyze_results(
-                results=results, save_path=os.path.join(output_dir, "analysis.png")
-            )
-            analysis_csv = os.path.join(output_dir, "analysis.csv")
-            analysis_df.to_csv(analysis_csv)
-            print(f"Saved analysis to {analysis_csv}")
-        except Exception as e:
-            print(f"Error during analysis: {e}")
-
-        debug_log("Experiment complete", is_important=True, divider=True)
-        print("Experiment complete")
+                    print(f"Error generating for query {query_idx+1} with factor {factor}: {e}")
+                    debug_log(f"Error: {e}", is_important=True)
+                    # Add error result
+                    results.append({
+                        "query": query,
+                        "query_idx": query_idx,
+                        "inhibition_factor": factor,
+                        "gamma": gamma,
+                        "error": str(e),
+                        "timestamp": datetime.now().isoformat(),
+                    })
+            
+            # Generate query-level visualization
+            if save_intermediate and len(query_results) > 0:
+                query_safe = query.replace(" ", "_")[:30].replace("?", "").replace("/", "_")
+                save_path = os.path.join(output_dir, f"query_{query_idx+1}_{query_safe}_summary.png")
+                try:
+                    analyze_results(query_results, save_path=save_path)
+                    print(f"  Saved query analysis to {save_path}")
+                except Exception as e:
+                    print(f"  Error saving query analysis: {e}")
+        
+        debug_log(f"Experiment complete with {len(results)} total data points", is_important=True)
         return results
 
     def analyze_results(

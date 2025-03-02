@@ -89,6 +89,72 @@ We also provide several shell scripts for convenience:
 - `run_multi_gpu_experiment.sh`: For running on systems with multiple GPUs
 - `run_mistral_experiment.sh`: Specifically configured for Mistral models
 
+#### Using run_mistral_experiment.sh
+
+The `run_mistral_experiment.sh` script provides a convenient way to run DMN inhibition experiments specifically optimized for Mistral models. It includes sensible defaults and additional options for customization.
+
+```bash
+# View help and available options
+./run_mistral_experiment.sh --help
+
+# Run with default settings (uses Mistral-7B-v0.1)
+./run_mistral_experiment.sh
+
+# Run with custom parameters
+./run_mistral_experiment.sh --output-dir my_mistral_results \
+                          --factors 0.0 0.3 0.6 0.9 \
+                          --max-tokens 250
+
+# Run with a pre-identified DMN file (saves time on repeated experiments)
+./run_mistral_experiment.sh --dmn-file dmn_heads_mistral-7b-v0.1.json
+
+# Run with custom queries
+./run_mistral_experiment.sh --queries "Design a utopian society" \
+                          "Write a poem about artificial consciousness" \
+                          "Describe what it would feel like to be a quantum particle"
+
+# Control the inhibition decay using gamma parameter (0-1)
+./run_mistral_experiment.sh --gamma 0.9  # Higher value = more consistent inhibition across heads
+./run_mistral_experiment.sh --gamma 0.7  # Lower value = more focused inhibition on top heads
+```
+
+The script supports the following options:
+- `--model`: Specify a different Mistral model variant
+- `--output-dir`: Custom directory for results (default: timestamped folder)
+- `--dmn-file`: Use a pre-identified Default Mode Network file
+- `--queries`: Custom test prompts (default: uses creative prompts)
+- `--factors`: Inhibition factors between 0.0-1.0 (higher values = stronger "psychedelic" effect)
+- `--max-tokens`: Maximum tokens to generate per response
+- `--gamma`: Decay factor for inhibition across heads (default: 0.85)
+- `--flash-attn`: Install flash-attention for better performance (CUDA systems only)
+
+The first run will identify the DMN and save it for future use. Subsequent runs can use the `--dmn-file` option to skip this step and save time.
+
+### Advanced DMN Inhibition Control
+
+LLaMaOnAcid now features enhanced control over the inhibition process:
+
+1. **Ordered Inhibition**: The DMN heads are now ordered by importance (from most to least active), allowing for more precise targeting of the most influential attention patterns.
+
+2. **Gamma Decay**: The `--gamma` parameter controls how inhibition decays across the ordered heads:
+   - For head at position N: `inhibition_factor * (gamma ^ (N-1))`
+   - Higher gamma (e.g., 0.9): More uniform inhibition across all heads
+   - Lower gamma (e.g., 0.7): Rapidly decreasing inhibition, focusing on the most active heads
+
+3. **Detailed Logging**: The system now logs the ordered list of heads that are inhibited, showing their layer, head index, and importance score.
+
+When running an experiment, you'll see output showing the top DMN heads and their inhibition levels:
+
+```
+Top 10 DMN heads ordered by importance:
+#1: Layer 20, Head 15, Score 0.6743, Inhibition 0.7000
+#2: Layer 18, Head 7,  Score 0.6521, Inhibition 0.5950
+#3: Layer 24, Head 11, Score 0.6392, Inhibition 0.5057
+...
+```
+
+This allows for more precise experimentation with different inhibition patterns across the network.
+
 ### Python API
 
 You can also use the Python API for more customized experiments:

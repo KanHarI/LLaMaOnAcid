@@ -78,6 +78,12 @@ def main() -> None:
         default=DEFAULT_INHIBITION_FACTORS,
         help="Inhibition factors to use (default: 0.0, 0.3, 0.5, 0.7, 0.9)",
     )
+    parser.add_argument(
+        "--gamma",
+        type=float,
+        default=0.85,
+        help="Gamma decay factor for inhibition (default: 0.85). Higher values preserve more inhibition across heads.",
+    )
     
     # DMN identification parameters
     parser.add_argument(
@@ -152,6 +158,7 @@ def main() -> None:
     results = experiment.run_experiment(
         queries=queries,
         inhibition_factors=args.factors,
+        gamma=args.gamma,
         max_new_tokens=args.max_tokens,
         n_chunks=args.n_chunks,
         dmn_file=args.dmn_file,

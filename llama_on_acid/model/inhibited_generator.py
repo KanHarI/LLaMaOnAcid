@@ -116,6 +116,7 @@ class InhibitedGenerator:
         self,
         prompt: str,
         inhibition_factor: float = 0.5,
+        gamma: float = 0.85,
         max_new_tokens: int = 200,
         temperature: float = 0.7,
         top_p: float = 0.9,
@@ -126,7 +127,8 @@ class InhibitedGenerator:
 
         Args:
             prompt: Input prompt
-            inhibition_factor: Factor by which to scale down the attention weights (0-1)
+            inhibition_factor: Base factor by which to scale down the attention weights (0-1)
+            gamma: Decay factor for inhibition applied to each successive head (0-1)
             max_new_tokens: Maximum number of tokens to generate
             temperature: Sampling temperature
             top_p: Top-p sampling parameter
@@ -135,7 +137,7 @@ class InhibitedGenerator:
         Returns:
             Tuple of (normal_output, inhibited_output)
         """
-        debug_log(f"Generating with inhibition (factor={inhibition_factor})", is_important=True, divider=True)
+        debug_log(f"Generating with inhibition (factor={inhibition_factor}, gamma={gamma})", is_important=True, divider=True)
         debug_log(f"Prompt (first 50 chars): '{prompt[:50]}...'")
         debug_log(f"Generation parameters: max_tokens={max_new_tokens}, temp={temperature}, top_p={top_p}, do_sample={do_sample}")
         
@@ -173,14 +175,14 @@ class InhibitedGenerator:
         debug_log(f"Normal output length: {normal_length} characters")
 
         # Now generate with inhibition
-        debug_log(f"Starting inhibited generation with factor {inhibition_factor}...", is_important=True)
-        print(f"Generating with inhibition factor {inhibition_factor}...")
+        debug_log(f"Starting inhibited generation with factor {inhibition_factor} and gamma {gamma}...", is_important=True)
+        print(f"Generating with inhibition factor {inhibition_factor} and gamma {gamma}...")
 
         # Create attention mask for inhibiting specific heads
         attention_masks: Dict[int, Dict[int, float]] = {}
 
         try:
-            debug_log("Creating attention masks for DMN inhibition...")
+            debug_log("Creating attention masks for DMN inhibition with gamma decay...")
             # Check for any potential layer_idx that might be out of bounds
             max_layer = -1
             for layer_idx, head_idx, _ in self.top_default_mode_heads:
@@ -214,17 +216,32 @@ class InhibitedGenerator:
                 self.top_default_mode_heads = filtered_heads
                 debug_log(f"Filtered to {len(filtered_heads)} valid heads")
 
-            # Now create the attention masks with validated heads
-            for layer_idx, head_idx, _ in self.top_default_mode_heads:
+            # Now create the attention masks with validated heads and gamma decay
+            debug_log("Applying gamma decay to inhibition factors:", is_important=True)
+            
+            # First, ensure the heads are sorted by importance score (highest first)
+            sorted_heads = sorted(self.top_default_mode_heads, key=lambda x: x[2], reverse=True)
+            
+            # Apply gamma decay to inhibition factor for each head based on its rank
+            for rank, (layer_idx, head_idx, score) in enumerate(sorted_heads):
                 if layer_idx not in attention_masks:
                     attention_masks[layer_idx] = {}
-                attention_masks[layer_idx][head_idx] = inhibition_factor
+                
+                # Calculate decayed inhibition factor
+                decayed_factor = inhibition_factor * (gamma ** rank)
+                attention_masks[layer_idx][head_idx] = decayed_factor
+                
+                # Log the first few heads and their inhibition factors
+                if rank < 10:
+                    debug_log(f"Head #{rank+1}: Layer {layer_idx}, Head {head_idx}, Score {score:.4f}, Inhibition {decayed_factor:.4f}")
 
-            debug_log(f"Created attention masks for {len(attention_masks)} layers")
-            # Log a sample of the masks
-            sample_layers = list(attention_masks.keys())[:3]
-            for layer in sample_layers:
-                debug_log(f"Layer {layer} mask: {attention_masks[layer]}")
+            debug_log(f"Created attention masks with gamma decay for {len(attention_masks)} layers")
+            debug_log(f"Overall DMN inhibition summary:")
+            debug_log(f"  Base inhibition factor: {inhibition_factor}")
+            debug_log(f"  Gamma decay factor: {gamma}")
+            debug_log(f"  Number of inhibited heads: {len(sorted_heads)}")
+            debug_log(f"  Most inhibited head factor: {inhibition_factor}")
+            debug_log(f"  Least inhibited head factor: {inhibition_factor * (gamma ** (len(sorted_heads)-1)):.6f}")
 
         except Exception as e:
             debug_log(f"Error creating attention masks: {e}", is_important=True)

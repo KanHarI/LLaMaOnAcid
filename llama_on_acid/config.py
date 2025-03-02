@@ -24,7 +24,7 @@ CACHE_TTL_DAYS = {
 
 # Generation settings
 DEFAULT_GENERATION_PARAMS = {
-    "max_new_tokens": 200,
+    "max_new_tokens": 400,
     "do_sample": True,
     "temperature": 0.7,
     "top_p": 0.9,

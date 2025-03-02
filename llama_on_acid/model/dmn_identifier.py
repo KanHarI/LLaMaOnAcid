@@ -377,74 +377,63 @@ class DefaultModeNetworkIdentifier:
 
     def select_top_default_mode_heads(self, top_n_per_layer: int = None) -> List[Tuple[int, int, float]]:
         """
-        Select the top N most active heads from each layer as the default mode network,
-        excluding the first and last layers.
+        Select top default mode network heads from the importance scores.
 
         Args:
-            top_n_per_layer: Number of top heads to select from each layer
+            top_n_per_layer: Number of top heads to select per layer
 
         Returns:
-            List of (layer_idx, head_idx, score) tuples
+            List of (layer_idx, head_idx, score) tuples representing the DMN
         """
-        # Use config value if not provided
+        debug_log("Selecting top default mode heads", is_important=True)
+        debug_log(f"Parameters: top_n_per_layer={top_n_per_layer}")
+
+        if not self.head_importance_scores:
+            self._calculate_head_importance_scores()
+
         if top_n_per_layer is None:
             top_n_per_layer = DMN_CONFIG["top_n_per_layer"]
-            
-        skip_first_last = DMN_CONFIG["skip_first_last"]
-        verbose = DMN_CONFIG["verbose_logging"]
-            
-        debug_log(f"Selecting top {top_n_per_layer} default mode heads per layer " +
-                 f"({'excluding' if skip_first_last else 'including'} first and last layers)...", 
-                 is_important=True)
-        
-        if not self.head_importance_scores:
-            error_msg = "Must run identify_default_mode_network() first"
-            debug_log(error_msg, is_important=True)
-            raise ValueError(error_msg)
 
-        # Group heads by layer
-        heads_by_layer = {}
-        for layer_idx, head_idx, score in self.head_importance_scores:
-            if layer_idx not in heads_by_layer:
-                heads_by_layer[layer_idx] = []
-            heads_by_layer[layer_idx].append((layer_idx, head_idx, score))
-        
-        # Sort heads within each layer by score (descending)
-        for layer_idx in heads_by_layer:
-            heads_by_layer[layer_idx].sort(key=lambda x: x[2], reverse=True)
-        
-        # Select top heads from each layer, excluding first and last layers if configured
-        selected_heads = []
-        start_layer = 1 if skip_first_last else 0
-        end_layer = self.num_layers - 1 if skip_first_last else self.num_layers
-        
-        for layer_idx in range(start_layer, end_layer):
-            if layer_idx in heads_by_layer:
-                layer_heads = heads_by_layer[layer_idx][:top_n_per_layer]  # Take top N heads from this layer
-                selected_heads.extend(layer_heads)
-                debug_log(f"Layer {layer_idx}: Selected {len(layer_heads)} heads", verbose=verbose)
-        
-        self.top_default_mode_heads = selected_heads
-        
-        debug_log(f"Selected total of {len(selected_heads)} DMN heads across all layers", is_important=True)
-        
-        # Print selection details by layer
-        for layer_idx in range(self.num_layers):
+        # Whether to skip first and last layers
+        skip_first_last = DMN_CONFIG.get("skip_first_last", True)
+        if skip_first_last:
+            debug_log("Skipping first and last layers as per DMN_CONFIG setting")
+
+        # Dictionary to track heads selected per layer
+        heads_per_layer = {}
+        self.top_default_mode_heads = []
+
+        for layer_idx, head_idx, score in sorted(self.head_importance_scores, key=lambda x: x[2], reverse=True):
+            # Skip first and last layers if configured
             if skip_first_last and (layer_idx == 0 or layer_idx == self.num_layers - 1):
-                debug_log(f"  Layer {layer_idx}: SKIPPED (first/last layer)", verbose=verbose)
                 continue
 
-            layer_heads = [(h, s) for l, h, s in selected_heads if l == layer_idx]
-            if layer_heads:
-                head_info = ", ".join([f"head {h} ({s:.4f})" for h, s in layer_heads])
-                debug_log(f"  Layer {layer_idx}: {head_info}", verbose=verbose)
-            else:
-                debug_log(f"  Layer {layer_idx}: No heads selected", verbose=verbose)
-        
-        # Log distribution of heads by layer
-        layer_dist = Counter([layer for layer, _, _ in selected_heads])
-        debug_log(f"Layer distribution in top DMN heads: {layer_dist}", verbose=verbose)
-        
+            # Initialize layer entry if not present
+            if layer_idx not in heads_per_layer:
+                heads_per_layer[layer_idx] = []
+
+            # Add head if we haven't reached the limit for this layer
+            if len(heads_per_layer[layer_idx]) < top_n_per_layer:
+                heads_per_layer[layer_idx].append((head_idx, score))
+                self.top_default_mode_heads.append((layer_idx, head_idx, score))
+
+        # Sort the top default mode heads by score (highest to lowest) - this is the important change
+        self.top_default_mode_heads = sorted(self.top_default_mode_heads, key=lambda x: x[2], reverse=True)
+
+        # Log the heads selected per layer
+        debug_log(f"Selected {len(self.top_default_mode_heads)} heads across {len(heads_per_layer)} layers", is_important=True)
+        debug_log("Heads selected per layer:")
+        for layer_idx in sorted(heads_per_layer.keys()):
+            selected_heads = heads_per_layer[layer_idx]
+            head_indices = [head_idx for head_idx, _ in selected_heads]
+            debug_log(f"Layer {layer_idx}: {len(selected_heads)} heads {head_indices}")
+            
+        # Print the top 10 heads overall by importance
+        if self.top_default_mode_heads:
+            debug_log("Top 10 most important heads across all layers:", is_important=True)
+            for i, (layer, head, score) in enumerate(self.top_default_mode_heads[:10]):
+                debug_log(f"  #{i+1}: Layer {layer}, Head {head}, Score {score:.4f}")
+
         return self.top_default_mode_heads
 
     def save_default_mode_network(self, filepath: str) -> None:
