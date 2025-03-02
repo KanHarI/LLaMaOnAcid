@@ -647,13 +647,41 @@ class InhibitedGenerator:
         all_tokens = list(outputs[0].cpu().numpy())
         debug_log(f"Generated {len(all_tokens)} total tokens", verbose=bool(verbose))
 
-        # Fix tuple indexing by first converting to a list
+        # Check tensor dimensions and slice appropriately
         outputs_list = list(outputs)
-        outputs_list[0] = outputs_list[0][:, input_ids.shape[1] :]
 
-        debug_log(f"New tokens count: {outputs_list[0].shape[1]}", verbose=bool(verbose))
+        # Debug the shape of the output tensor
+        debug_log(f"Output tensor shape: {outputs_list[0].shape}", is_important=True)
 
-        generated_text = self.tokenizer.decode(outputs_list[0], skip_special_tokens=True)
+        # Handle different tensor dimensions
+        if len(outputs_list[0].shape) == 1:
+            # For 1D tensors, just decode the entire sequence
+            debug_log("Detected 1D output tensor, using entire sequence", is_important=True)
+            generated_text = self.tokenizer.decode(outputs_list[0], skip_special_tokens=True)
+        else:
+            # For 2D or higher tensors, slice to get only new tokens
+            debug_log(
+                "Detected multi-dimensional output tensor, slicing for new tokens only",
+                is_important=True,
+            )
+            try:
+                outputs_list[0] = outputs_list[0][:, input_ids.shape[1] :]
+                debug_log(f"New tokens count: {outputs_list[0].shape[1]}", verbose=bool(verbose))
+                generated_text = self.tokenizer.decode(outputs_list[0][0], skip_special_tokens=True)
+            except IndexError as e:
+                # Alternative approach if indexing fails
+                debug_log(
+                    f"Indexing error: {e}. Using alternative decoding approach.", is_important=True
+                )
+                generated_text = self.tokenizer.decode(outputs_list[0], skip_special_tokens=True)
+                # Remove the input prompt part if possible
+                prompt_decoded = self.tokenizer.decode(input_ids[0], skip_special_tokens=True)
+                if generated_text.startswith(prompt_decoded):
+                    generated_text = generated_text[len(prompt_decoded) :]
+                    debug_log(
+                        "Manually removed input prompt from generated text", is_important=True
+                    )
+
         debug_log(f"Output decoded, length: {len(generated_text)} characters")
         return cast(str, generated_text)
 
