@@ -295,9 +295,17 @@ class InhibitedGenerator:
         self.model.eval()
 
         # Apply attention inhibition during generation
-        inhibited_output = self._generate_with_attention_inhibition(
-            prompt, attention_masks, max_new_tokens, temperature, top_p, do_sample
-        )
+        try:
+            inhibited_output = self._generate_with_attention_inhibition(
+                prompt, attention_masks, max_new_tokens, temperature, top_p, do_sample
+            )
+        except Exception as e:
+            import traceback
+
+            stack_trace = traceback.format_exc()
+            debug_log(f"Error generating with inhibition: {e}", is_important=True)
+            debug_log(f"Stack trace for inhibited generation:\n{stack_trace}", is_important=True)
+            raise
 
         inhibited_length = len(inhibited_output)
         debug_log(f"Inhibited output length: {inhibited_length} characters")
@@ -524,11 +532,12 @@ class InhibitedGenerator:
                 except Exception as e:
                     import traceback
 
+                    stack_trace = traceback.format_exc()
                     debug_log(
                         f"Error in inhibition hook for layer {layer_idx}: {str(e)}",
                         is_important=True,
                     )
-                    debug_log(f"Stack trace: {traceback.format_exc()}", is_important=True)
+                    debug_log(f"Stack trace:\n{stack_trace}", is_important=True)
                     # Return original output in case of error to prevent generation from failing
                     return output
 
@@ -591,7 +600,11 @@ class InhibitedGenerator:
                 debug_log(f"Successfully registered hook for layer {layer_idx}", verbose=False)
 
             except Exception as e:
+                import traceback
+
+                stack_trace = traceback.format_exc()
                 debug_log(f"Error registering hook for layer {layer_idx}: {e}", is_important=True)
+                debug_log(f"Stack trace for hook registration:\n{stack_trace}", is_important=True)
                 error_count += 1
 
         debug_log(f"Registered {registered_count} hooks with {error_count} errors")
@@ -609,7 +622,13 @@ class InhibitedGenerator:
                 )
             debug_log("Generation completed successfully")
         except Exception as e:
+            import traceback
+
+            stack_trace = traceback.format_exc()
             debug_log(f"Error during generation with inhibition: {e}", is_important=True)
+            debug_log(
+                f"Stack trace for generation with inhibition:\n{stack_trace}", is_important=True
+            )
             # Remove hooks before re-raising
             for hook in hooks:
                 hook.remove()

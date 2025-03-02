@@ -407,7 +407,11 @@ class DefaultModeNetworkExperiment:
                 do_sample=do_sample,
             )
         except Exception as e:
+            import traceback
+
+            stack_trace = traceback.format_exc()
             debug_log(f"Error during generation: {e}", is_important=True)
+            debug_log(f"Stack trace:\n{stack_trace}", is_important=True)
             raise
 
         return normal_output, inhibited_output
